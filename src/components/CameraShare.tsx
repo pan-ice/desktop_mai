@@ -1,0 +1,175 @@
+import { useEffect, useRef, useState } from "react";
+import { Camera, LoaderCircle, Send, X } from "lucide-react";
+import { api, perform } from "../api";
+import type { Snapshot } from "../../shared/types";
+
+export function CameraShare({
+  state,
+  onClose,
+}: {
+  state: Snapshot;
+  onClose: () => void;
+}) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selected, setSelected] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [image, setImage] = useState("");
+  const [text, setText] = useState("这是我现在看到的，一起来看看吧。");
+  useEffect(() => {
+    if (image) return;
+    let disposed = false,
+      stream: MediaStream | undefined;
+    setLoading(true);
+    setError("");
+    void navigator.mediaDevices
+      .getUserMedia({
+        video: selected
+          ? {
+              deviceId: { exact: selected },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            }
+          : { width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      })
+      .then(async (media) => {
+        stream = media;
+        if (disposed) {
+          media.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        if (video.current) {
+          video.current.srcObject = media;
+          await video.current.play();
+        }
+        const available = await navigator.mediaDevices.enumerateDevices();
+        if (!disposed) {
+          setDevices(
+            available.filter((device) => device.kind === "videoinput"),
+          );
+          setLoading(false);
+        }
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setError(reason.message || String(reason));
+          setLoading(false);
+        }
+      });
+    return () => {
+      disposed = true;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (video.current) video.current.srcObject = null;
+    };
+  }, [selected, image]);
+  const take = () => {
+    const source = video.current;
+    if (!source?.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = source.videoWidth;
+    canvas.height = source.videoHeight;
+    canvas.getContext("2d")!.drawImage(source, 0, 0);
+    setImage(canvas.toDataURL("image/jpeg", 0.82));
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section
+        className="modal camera-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="camera-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-heading">
+          <span className="modal-icon">
+            <Camera size={23} />
+          </span>
+          <div>
+            <h2 id="camera-title">分享眼前的小世界</h2>
+            <p>仅在这个窗口打开时使用摄像头。拍照预览后，再由你发送。</p>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="关闭摄像头"
+            onClick={onClose}
+          >
+            <X size={19} />
+          </button>
+        </div>
+        <div className="camera-preview">
+          {image ? (
+            <img src={image} alt="待发送的摄像头照片" />
+          ) : (
+            <video ref={video} muted playsInline />
+          )}
+          {loading && !image && (
+            <div>
+              <LoaderCircle className="spin" />
+              正在打开摄像头…
+            </div>
+          )}
+          {error && <div className="inline-error">{error}</div>}
+        </div>
+        {image ? (
+          <textarea
+            aria-label="照片附言"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            rows={2}
+          />
+        ) : (
+          devices.length > 1 && (
+            <select
+              aria-label="选择摄像头"
+              value={selected}
+              onChange={(event) => setSelected(event.target.value)}
+            >
+              <option value="">默认摄像头</option>
+              {devices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || "摄像头"}
+                </option>
+              ))}
+            </select>
+          )
+        )}
+        <div className="modal-footer">
+          <span>关闭窗口立即释放摄像头</span>
+          {image ? (
+            <div className="heading-actions">
+              <button className="button secondary" onClick={() => setImage("")}>
+                重新拍照
+              </button>
+              <button
+                className="button primary"
+                disabled={state.connection.phase !== "connected"}
+                onClick={() => {
+                  void perform(async () => {
+                    if (!state.settings.screenEnabled)
+                      await api.updateSettings({ screenEnabled: true });
+                    await api.send({ text, image, source: "screen" });
+                    onClose();
+                  }, "照片已发送给 MaiBot");
+                }}
+              >
+                <Send size={14} />
+                发送给{state.settings.nickname}
+              </button>
+            </div>
+          ) : (
+            <button
+              className="button primary"
+              disabled={loading || Boolean(error)}
+              onClick={take}
+            >
+              <Camera size={15} />
+              拍照并预览
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}

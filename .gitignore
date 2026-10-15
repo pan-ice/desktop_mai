@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+release/
+.cache/
+.ruff_cache/
+logs/
+*.log
+MaiBot/
+references/
+.env
+.env.*
+!.env.example

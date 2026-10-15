@@ -1,0 +1,67 @@
+import type { Settings, Snapshot } from "./types";
+
+export const defaultSettings: Settings = {
+  nickname: "麦麦",
+  userName: "你",
+  userId: "desktop_owner",
+  connectionMode: "local",
+  serverUrl: "",
+  adapterPort: 18765,
+  adapterScope: "",
+  platform: "desktop_pet",
+  botId: "mai_desktop_pet",
+  dashboardUrl: "http://127.0.0.1:8001",
+  alwaysOnTop: true,
+  clickThrough: false,
+  petVisible: true,
+  petScale: 1,
+  reducedMotion: false,
+  autoConnect: true,
+  launchAtLogin: false,
+  voiceEnabled: false,
+  ttsEngine: "system",
+  systemVoice: "",
+  speechBaseUrl: "https://api.openai.com/v1",
+  sttModel: "whisper-1",
+  ttsModel: "tts-1",
+  ttsVoice: "alloy",
+  speechRate: 1,
+  speechVolume: 0.8,
+  vadSensitivity: 0.025,
+  vadSilenceMs: 1000,
+  screenEnabled: false,
+  screenSourceId: "",
+  screenObservationEnabled: false,
+  screenObservationSeconds: 120,
+  screenObservationPrompt:
+    "这是我当前的屏幕。结合我们的聊天，如果看到了值得一起聊的内容，请用你自己的方式自然回应；不必逐项描述屏幕。",
+  proactiveEnabled: false,
+  proactiveMinutes: 30,
+  proactivePrompt:
+    "我正在电脑前。请结合我们的聊天，用你自己的方式自然地发起一个轻松的话题，简短一点。",
+  quietStart: 23,
+  quietEnd: 8,
+  activeModelId: null,
+  corePath: "",
+};
+
+export function emptySnapshot(desktop = false): Snapshot {
+  return {
+    settings: { ...defaultSettings },
+    credentials: { adapterToken: false, serverToken: false, speechKey: false },
+    connection: {
+      phase: "disconnected",
+      detail: "等待连接 MaiBot",
+      since: Date.now(),
+    },
+    history: [],
+    models: [],
+    activity: [],
+    mood: "idle",
+    focusUntil: null,
+    conversationActive: false,
+    core: { running: false, detail: "未由桌宠启动" },
+    desktop,
+    version: "0.3.0",
+  };
+}

@@ -1,0 +1,168 @@
+# Mai · 桌面伙伴
+
+以 **MaiBot 为对话内核**、参考 [N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) 桌面陪伴体验开发的 Windows 桌宠。Electron + React + TypeScript；不附带第三方角色模型，可导入自己的角色。
+
+桌宠通过独立的 **MaiBot MessageGateway 适配器插件**接入正常私聊。人格、回复策略、表达学习、长期记忆、插件与工具由 MaiBot 负责；主动陪伴使用内核的主动任务接口。
+
+源码分别维护在私有仓库 [桌宠客户端](https://github.com/pan-ice/desktop_mai) 和 [适配器](https://github.com/pan-ice/desktop_pet_adapter)，需要获得访问权限。首次获取完整开发工作区：
+
+```powershell
+gh repo clone pan-ice/desktop_mai
+cd desktop_mai
+git clone https://github.com/Mai-with-u/MaiBot.git MaiBot
+gh repo clone pan-ice/desktop_pet_adapter MaiBot/plugins/desktop_pet_adapter
+```
+
+MaiBot 内核和适配器各自保留独立 Git 历史，客户端仓库不包含 `MaiBot/`。以下插件文档可在完整工作区中阅读，也可直接在[适配器仓库](https://github.com/pan-ice/desktop_pet_adapter)查看。
+
+![陪伴空间预览](docs/preview.png)
+
+## 启动
+
+Node.js **22.12+**（开发环境已使用 Node.js 24 验证）。
+
+```powershell
+cd D:\project\desktop_mai
+npm ci
+npm run dev
+```
+
+也可以双击 `启动桌宠.cmd`，或先构建再运行：
+
+```powershell
+npm run build
+npm start
+```
+
+Windows 便携版构建：
+
+```powershell
+npm run dist:win
+```
+
+生成 `release/Mai-Desktop-Pet-0.3.0-win-x64.exe` 和独立的 `MaiBot-Desktop-Pet-Adapter-0.3.0.zip`。桌宠无需安装 Node.js 即可运行；插件解压到 MaiBot 的 `plugins`。发行包不包含内核、凭证或角色模型。
+
+## 多人服务器
+
+0.3.0 支持把 MaiBot 部署在服务器上，为多个人提供桌宠连接。服务器运行独立接入程序与一个适配器，各人导入管理员发放的凭证文件，主动连接服务器的 WSS 地址。账号、私聊会话、回复与本地聊天历史分别归属；同账号在另一台桌宠连接时会替换旧连接。
+
+用户打开「内核与记忆」→「导入服务器凭证」→「连接服务器」。服务器部署、账号发放/撤销及 Caddy/systemd 示例见 [多人服务器指南](MaiBot/plugins/desktop_pet_adapter/SERVER.md)。
+
+共享实例的人格、模型、插件和部分全局学习数据由管理员统一维护。独立会话不代表完整的数据租户隔离；长期记忆共享与人物画像范围详见部署指南。
+
+## 首次连接 MaiBot
+
+当前目录中的 `MaiBot/` 是独立克隆的上游仓库，内核源码保持不变。插件位于 `MaiBot/plugins/desktop_pet_adapter`，是独立 Git 仓库。要求 MaiBot **1.3.5–1.3.x**、SDK **2.10+ / <3**、Python **3.12+**。
+
+1. 安装 Python 3.12+ 与 uv，在 MaiBot 目录执行 `uv sync`。
+2. 执行 `uv run bot.py`，在终端阅读并确认 MaiBot 的协议与隐私条款，完成配置生成。
+3. 按 MaiBot 指引，在它的管理界面配置对话与视觉模型的服务地址、模型名和 API Key。
+4. 将适配器 ZIP 解压到 `MaiBot/plugins`；本工作区已放好独立插件源码。在 MaiBot 目录执行下列命令安装公开依赖：
+
+   ```powershell
+   uv pip install --python .venv/Scripts/python.exe -r plugins/desktop_pet_adapter/requirements.txt
+   ```
+
+5. 桌宠「内核与记忆」保存并开启接入，默认端口 **18765**。点击「导出插件配置」，保存为 `MaiBot/plugins/desktop_pet_adapter/config.toml`，包含自动生成的独立令牌。
+6. 启动或重载 MaiBot，桌宠显示 **“协议 v1 · 会话已确认”** 后即可聊天。插件自动注册账号路由；如内核配置了适配器名单策略，需要允许该私聊。MaiBot 管理界面的默认地址是 `http://127.0.0.1:8001`。
+
+桌宠监听本机回环地址，插件主动连接，支持新旧插件实例并存的重载过程。插件令牌独立于 WebUI、模型服务和旧消息服务令牌。配置文件含凭证，请妥善保存；桌宠本地使用系统加密保存令牌。
+
+桌宠默认使用固定的 `desktop_owner` 身份；插件通过 `ctx.chat.open_session` 获取真实私聊流。保持平台、机器人账号、用户 ID 与空作用域可延续原有归属。远程内核、多套桌宠、消息回执及协议版本见 [插件说明](MaiBot/plugins/desktop_pet_adapter/README.md) 与 [维护指南](docs/maintenance.md)。
+
+从 0.1.0 升级时，会先备份 `state.v1.backup.json`，保留历史、角色、语音配置和身份，停用旧自动连接。到本页面导出插件配置完成迁移；旧内核令牌不会复用，也不会继续走旧协议。无需再为桌宠添加 `bot.platforms` 条目，已有其他平台配置照常保留。
+
+初始化完成后，可以从桌宠界面启动本地 MaiBot。停止时先通过控制管道通知内核正常退出，超时再清理本应用创建的进程树；外部启动的 MaiBot 不会由桌宠关闭。
+
+## 已实现的功能
+
+| 能力 | 使用方式 |
+| --- | --- |
+| 透明桌宠 | 无边框、拖动、屏幕边界限制、置顶、缩放、鼠标穿透、托盘、全局召回快捷键 |
+| 文字聊天 | 完整聊天页、桌宠迷你输入框、回复气泡、图片 / 表情 / 语音接收、固定会话、失败提示 |
+| 语音对话 | 手动录音、ASR 转写、连续语音 VAD 分句、自动回复朗读、系统 TTS 或兼容 API |
+| 屏幕理解 | 屏幕 / 窗口选择、截图预览、图片消息、可选定时屏幕陪伴、重复画面过滤 |
+| 摄像头 | 摄像头选择、拍照、预览后分享，关闭预览即释放设备 |
+| 主动陪伴 | 空闲后向内核提交陪伴意图、可配置意图和频率、跨午夜免打扰、专注时暂停 |
+| 专注陪伴 | 25 分钟专注、倒计时、安静状态、结束通知 |
+| 模型导入 | 图片 / GIF、PNGTuber、Live2D Cubism 3 / 4、VRM 0 / 1、GLB、PMX / PMD |
+| 动画表现 | 呼吸、眨眼、开心、思考、睡眠、语音口型；VRM 视线及 MMD 常用表情映射 |
+| 人格与记忆 | 使用 MaiBot 的实际人格和记忆系统，提供对应管理入口 |
+| 插件与工具 | 通过 MaiBot 的插件、模型、工具管理界面配置，能力随内核已有插件提供 |
+| 本地数据 | 设置持久化、最近 1,000 条记录、媒体单独保存、JSON 导出与清空、系统加密令牌 |
+| 内核连接 | 独立插件、认证和版本握手、真实会话、接收与保存回执、插件退避重连、内核运行日志 |
+| 多人服务器 | 每人独立凭证、私聊与回复路由、凭证撤销、账号限流、断线重连；支持 WSS 公网接入 |
+
+连续语音采用 **语音检测 → ASR → MaiBot → TTS**，仍由 MaiBot 生成回复。它不是直连其他模型的 Realtime API 旁路。模型与插件支持取决于你配置的 MaiBot 与服务商。
+
+「自动屏幕陪伴」默认关闭。先选择目标窗口，再启用独立开关；它按间隔向内核分享变化的画面。断线、专注、免打扰或隐藏桌宠时暂停，目标窗口消失时关闭该功能并提示。
+
+N.E.K.O 的 Steam 创意工坊、猫娘网络、手机端、专有账号 / 云同步和专用游戏插件属于其独立生态，本项目没有复制这些服务；对应扩展通过 MaiBot 插件接入。具体边界见 [实现与验证说明](docs/implementation.md)。
+
+## 角色资源
+
+在「角色衣橱」点击「导入角色」，程序将需要的资源复制到应用数据目录。
+
+- 图片：PNG / JPG / WebP / GIF，可直接选文件。
+- PNGTuber：同目录准备 `idle.png`、`talking.png` 与以下 JSON，选择 JSON 导入。
+
+  ```json
+  { "name": "我的麦麦", "idle": "idle.png", "talking": "talking.png" }
+  ```
+
+- Live2D：选择 `.model3.json`，自动复制所引用的 moc3、贴图、动作与表情。**Cubism Core 不随应用分发**：导入时选择官方 SDK 提供的 `live2dcubismcore.min.js`，也可将它放在模型入口文件旁边。
+- VRM / GLB：选择包含完整资源的单个 `.vrm` / `.glb` 文件。
+- MMD：将 `.pmx` / `.pmd` 及贴图放在独立文件夹中，选择模型文件；导入同文件夹内的模型资源。当前提供静态模型、呼吸与常见表情 / 口型映射，未包含 MMD 物理或 VMD 动作时间线。
+
+模型不能引用导入目录外的文件或远程 URL，单次导入上限 512 MB。程序不下载或分发角色模型。
+
+## 声音与设备
+
+系统朗读无需 API，声音取决于 Windows 已安装的语音包。
+
+录音转写与 API 朗读使用「声音与感知」中配置的兼容服务：`POST /audio/transcriptions`、`POST /audio/speech`，会保留 Base URL 中的 `/v1` 等前缀。本地兼容服务可以不填 API Key。先保存配置，再使用录音测试；测试转写不会自动发消息。
+
+连续语音只在桌宠窗口运行，点击连续语音按钮或对应开关开始；每段最长 45 秒。朗读期间暂停检测，隐藏桌宠、断线或开启专注会关闭连续语音。
+
+`Ctrl + Shift + M` 召回桌宠与控制面板，并恢复鼠标交互。主窗口关闭后保留托盘；托盘菜单「退出 Mai」才结束应用。
+
+## 数据与开发
+
+默认数据目录：`%APPDATA%\Mai Desktop Pet`，可在「偏好设置」中打开。开发测试使用 `MAI_USER_DATA` 指定隔离目录。
+
+```text
+electron/        Electron 主进程、协议桥接、本地数据与设备操作
+shared/          共享类型、配置默认值与 IPC 输入校验
+src/             React 控制面板、桌宠、语音与模型渲染器
+resources/       应用图标、内核受控启动器
+tests/           协议、重连、模型导入、媒体存储、陪伴策略测试
+scripts/         插件打包、桌面与实际 SDK 联调、进程生命周期验收
+MaiBot/          独立上游内核仓库
+  plugins/desktop_pet_adapter/   独立适配器仓库，包含锁文件、协议、测试和 CI
+references/      开发参考仓库，不进入应用打包
+```
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+npm run test:plugin
+npm run test:adapter
+npm run test:desktop
+```
+
+插件开发环境可独立初始化；跨语言与桌面测试使用它的解释器：
+
+```powershell
+cd MaiBot/plugins/desktop_pet_adapter
+uv sync --locked
+cd ../../..
+# 可通过 MAI_PYTHON 指定其他已安装 SDK 和 websockets 的解释器。
+npm run test:plugin
+npm run test:adapter
+npm run test:core-host
+```
+
+桌面测试使用本地测试服务、生成的几何模型与虚拟音视频设备，结束时关闭所有测试应用和服务；不会使用你的模型 Key 或向在线模型发送请求。
+
+长期维护的模块约定、版本策略和发布检查见 [维护指南](docs/maintenance.md)。插件是单独的私有仓库，克隆桌宠仓库时需按上方步骤获取到该路径；发布 ZIP 提供完整插件源码。尚未发布到插件市场。
