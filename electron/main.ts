@@ -22,6 +22,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { DeliveryUnknownError, MaiBotBridge } from "./bridge";
+import { AccountClient, type LoginProof } from "./accounts";
+import { LocalServer } from "./local-server";
 import { adapterConfig } from "./protocol";
 import { StateStore } from "./store";
 import {
@@ -31,12 +33,12 @@ import {
   removeHistoryMedia,
   saveAttachment,
 } from "./media";
-import { CoreProcess } from "./core-process";
 import { containedFile, importModelFile, withModelUrls } from "./models";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
 import {
   sendSchema,
+  isLocalServerUrl,
   serverConnectionSchema,
   settingsPatchSchema,
 } from "../shared/schemas";
@@ -81,11 +83,10 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) app.quit();
 
 const bridge = new MaiBotBridge();
-const core = new CoreProcess(
-  app.isPackaged
-    ? join(process.resourcesPath, "core_host.py")
-    : join(root, "resources/core_host.py"),
-);
+const accountClient = new AccountClient();
+const localServer = new LocalServer(process.env.MAI_PYTHON);
+let qqLogin: { server: string; proof: LoginProof } | null = null;
+let historyEpoch = 0;
 let store: StateStore;
 let dashboard: BrowserWindow | null = null;
 let pet: BrowserWindow | null = null;
@@ -166,7 +167,12 @@ async function observeScreen(now: number) {
 }
 
 function snapshot(): Snapshot {
-  return structuredClone(store.state);
+  return structuredClone({
+    ...store.state,
+    removedServerAccounts: store.removedAccounts(
+      store.state.settings.serverUrl,
+    ),
+  });
 }
 function broadcast() {
   const state = snapshot();
@@ -300,11 +306,12 @@ function applyPetSettings() {
   if (!pet) return;
   const settings = store.state.settings;
   const previous = pet.getBounds();
+  // Windows 会把不可拉伸窗口的当前尺寸作为最小值，缩小前清除旧约束。
+  pet.setMinimumSize(0, 0);
   pet.setSize(
     Math.round(340 * settings.petScale),
     Math.round(400 * settings.petScale),
   );
-  pet.webContents.setZoomFactor(settings.petScale);
   fitPet(previous.x, previous.y);
   pet.setAlwaysOnTop(settings.alwaysOnTop, "floating");
   pet.setIgnoreMouseEvents(settings.clickThrough, { forward: true });
@@ -330,6 +337,7 @@ async function updateSettings(patch: Partial<Settings>) {
       "adapterPort",
       "connectionMode",
       "serverUrl",
+      "serverAccountId",
       "adapterScope",
       "platform",
       "botId",
@@ -342,6 +350,20 @@ async function updateSettings(patch: Partial<Settings>) {
     activity("连接配置已更新，请重新连接 MaiBot");
   }
   store.state.settings = { ...previous, ...parsed };
+  if (connectionChanged)
+    await localServer.stopUnless(
+      store.state.settings.connectionMode === "server"
+        ? store.state.settings.serverUrl
+        : "",
+    );
+  if (
+    parsed.serverUrl !== undefined &&
+    parsed.serverUrl !== previous.serverUrl
+  ) {
+    store.state.settings.serverAccountId = "";
+    delete store.encrypted.serverToken;
+    store.state.credentials.serverToken = false;
+  }
   if (parsed.screenEnabled === false)
     store.state.settings.screenObservationEnabled = false;
   if ("screenSourceId" in parsed || parsed.screenObservationEnabled === true) {
@@ -363,7 +385,7 @@ async function send(input: SendInput, canSend?: () => boolean) {
   if (canSend && !canSend()) return false;
   const value = sendSchema.parse(input);
   if (bridge.phase !== "connected")
-    throw new Error("请先在「内核与记忆」连接 MaiBot");
+    throw new Error("请先在「连接与账号」选择并连接桌宠");
   if (value.image && !store.state.settings.screenEnabled)
     throw new Error("请先启用屏幕感知");
   const connection = store.state.connection;
@@ -399,7 +421,7 @@ async function send(input: SendInput, canSend?: () => boolean) {
   try {
     if (value.source === "proactive")
       await bridge.proactive(value.text, message.id);
-    else await bridge.send(value.text, value.image, message.id);
+    else await bridge.send(value.text, value.image, message.id, value.source);
     message.delivery = "sent";
     await store.save();
     broadcast();
@@ -471,8 +493,12 @@ async function ensureAdapterToken() {
 async function connectAdapter() {
   if (store.state.settings.connectionMode === "server") {
     if (!credential("serverToken"))
-      throw new Error("请先导入管理员提供的服务器凭证，或填写接入令牌");
+      throw new Error(
+        "请先通过 QQ 登录并选择桌宠账号，或导入管理员提供的服务器凭证",
+      );
     store.selectHistory("server:pending");
+    if (store.state.settings.serverAccountId)
+      await ensureLocalServer(store.state.settings.serverUrl);
   } else {
     await ensureAdapterToken();
     store.selectHistory("local");
@@ -485,6 +511,110 @@ async function connectAdapter() {
         : "adapterToken",
     ),
   );
+}
+
+async function ensureLocalServer(serverUrl: string): Promise<string> {
+  if (!isLocalServerUrl(serverUrl)) return serverUrl;
+  const result = await localServer.ensure(
+    store.state.settings.corePath,
+    serverUrl,
+  );
+  if (result.adapterChanged)
+    activity("本机连接已自动准备，运行中的 MaiBot 请重载一次桌宠插件");
+  return result.serverUrl;
+}
+
+function remoteAccount() {
+  const settings = store.state.settings;
+  const token = credential("serverToken");
+  if (settings.connectionMode !== "server" || !settings.serverUrl || !token)
+    throw new Error("请先通过 QQ 登录桌宠服务器");
+  return {
+    server: settings.serverUrl,
+    token,
+    accountId: settings.serverAccountId,
+  };
+}
+
+async function mergeCloudMessages(
+  messages: ChatMessage[],
+  history: ChatMessage[],
+  epoch: number,
+) {
+  for (const message of messages) {
+    if (history !== store.state.history || epoch !== historyEpoch) return;
+    const existing = history.find(
+      (item) => item.id === message.id && item.role === message.role,
+    );
+    if (existing) {
+      existing.timestamp = message.timestamp;
+      existing.source = message.source;
+      if (message.delivery) existing.delivery = message.delivery;
+      continue;
+    }
+    const attachments = [];
+    for (const attachment of message.attachments || [])
+      attachments.push(await saveAttachment(store.directory, attachment));
+    if (history !== store.state.history || epoch !== historyEpoch) {
+      await removeHistoryMedia(store.directory, [{ ...message, attachments }]);
+      return;
+    }
+    history.push({
+      ...message,
+      attachments: attachments.length ? attachments : undefined,
+    });
+  }
+  history.sort((left, right) => left.timestamp - right.timestamp);
+  await store.save();
+  broadcast();
+}
+
+async function syncCloudHistory(earlier = false) {
+  const { server, token, accountId } = remoteAccount();
+  if (!accountId) throw new Error("请选择一个桌宠账号");
+  if (store.state.historySync.loading) return;
+  const history = store.state.history;
+  const epoch = historyEpoch;
+  const original = new Set(earlier ? [] : history);
+  const before = earlier ? store.state.historySync.before : null;
+  store.state.historySync = {
+    ...store.state.historySync,
+    enabled: true,
+    loading: true,
+  };
+  broadcast();
+  try {
+    const page = await accountClient.history(
+      server,
+      token,
+      accountId,
+      before || undefined,
+    );
+    replyQueue = replyQueue
+      .catch(() => {})
+      .then(async () => {
+        if (history !== store.state.history || epoch !== historyEpoch) return;
+        // 初次同步以服务端为准，避免恢复其他设备已清空的旧本机缓存。
+        if (!earlier) {
+          const keep = history.filter((message) => !original.has(message));
+          history.splice(0, history.length, ...keep);
+        }
+        await mergeCloudMessages(page.messages, history, epoch);
+        if (history === store.state.history && epoch === historyEpoch)
+          store.state.historySync = {
+            enabled: true,
+            loading: false,
+            before: page.before,
+            hasMore: page.hasMore,
+          };
+      });
+    await replyQueue;
+  } finally {
+    if (history === store.state.history && epoch === historyEpoch) {
+      store.state.historySync.loading = false;
+      broadcast();
+    }
+  }
 }
 
 async function commands(
@@ -524,6 +654,180 @@ async function commands(
     }
     case "connect":
       return connectAdapter();
+    case "prepareLocalServer": {
+      const previous = new URL(
+        store.state.settings.serverUrl || "ws://127.0.0.1:18766/desktop",
+      );
+      const port =
+        ["127.0.0.1", "localhost", "[::1]"].includes(previous.hostname) &&
+        previous.port
+          ? previous.port
+          : "18766";
+      const serverUrl = `ws://127.0.0.1:${port}/desktop`;
+      let corePath = store.state.settings.corePath;
+      try {
+        await access(
+          join(corePath, "plugins/desktop_pet_adapter/tools/server.py"),
+        );
+      } catch {
+        const selected = await dialog.showOpenDialog({
+          title: "选择用于本机测试的 MaiBot 目录",
+          properties: ["openDirectory"],
+        });
+        if (selected.canceled || !selected.filePaths[0]) return null;
+        corePath = selected.filePaths[0];
+        await access(
+          join(corePath, "plugins/desktop_pet_adapter/tools/server.py"),
+        );
+      }
+      await updateSettings({ corePath });
+      await updateSettings({ connectionMode: "server", serverUrl });
+      return ensureLocalServer(serverUrl);
+    }
+    case "beginQQLogin": {
+      if (!safeStorage.isEncryptionAvailable())
+        throw new Error("系统加密不可用，无法保存设备凭证");
+      const server = await ensureLocalServer(
+        serverConnectionSchema.shape.serverUrl.parse(args[0]),
+      );
+      const name = z.string().trim().min(1).max(40).parse(args[1]);
+      if (qqLogin) {
+        const previous = qqLogin;
+        qqLogin = null;
+        await accountClient
+          .cancel(previous.server, previous.proof)
+          .catch(() => {});
+      }
+      const proof = await accountClient.begin(server, name);
+      qqLogin = { server, proof };
+      return { code: proof.code, expiresAt: proof.expiresAt };
+    }
+    case "pollQQLogin": {
+      const login = qqLogin;
+      if (!login) return "expired";
+      const result = await accountClient.poll(login.server, login.proof);
+      if (qqLogin !== login) return "expired";
+      if (result.status === "confirmed") {
+        if (!safeStorage.isEncryptionAvailable())
+          throw new Error("系统加密不可用，无法保存设备凭证");
+        await bridge.disconnect();
+        await replyQueue;
+        await updateSettings({
+          connectionMode: "server",
+          serverUrl: login.server,
+          serverAccountId: "",
+        });
+        store.selectHistory("server:pending");
+        store.encrypted.serverToken = safeStorage
+          .encryptString(result.token)
+          .toString("base64");
+        store.state.credentials.serverToken = true;
+        qqLogin = null;
+        await store.save();
+        broadcast();
+      } else if (result.status === "expired") qqLogin = null;
+      return result.status;
+    }
+    case "cancelQQLogin": {
+      const login = qqLogin;
+      qqLogin = null;
+      if (login) await accountClient.cancel(login.server, login.proof);
+      return;
+    }
+    case "serverAccounts": {
+      const { server, token } = remoteAccount();
+      await ensureLocalServer(server);
+      return (await accountClient.accounts(server, token)).accounts;
+    }
+    case "createServerAccount": {
+      const { server, token } = remoteAccount();
+      return accountClient.create(
+        server,
+        token,
+        z.string().trim().min(1).max(40).parse(args[0]),
+      );
+    }
+    case "selectServerAccount": {
+      const id = z
+        .string()
+        .regex(/^pet_[a-f0-9]{32}$/)
+        .parse(args[0]);
+      const { server, token } = remoteAccount();
+      const owned = (await accountClient.accounts(server, token)).accounts;
+      const selected = owned.find((account) => account.id === id);
+      if (!selected) throw new Error("该桌宠账号不存在或未获得授权");
+      await bridge.disconnect();
+      await replyQueue;
+      ++historyEpoch;
+      store.restoreServerAccount(server, id);
+      await updateSettings({ serverAccountId: id, nickname: selected.name });
+      await connectAdapter();
+      return;
+    }
+    case "removeServerAccount": {
+      const id = z
+        .string()
+        .regex(/^pet_[a-f0-9]{32}$/)
+        .parse(args[0]);
+      const { serverUrl, connectionMode } = store.state.settings;
+      if (connectionMode !== "server" || !serverUrl)
+        throw new Error("请先选择桌宠服务器");
+      if (store.state.settings.serverAccountId === id) {
+        await bridge.disconnect();
+        await replyQueue;
+        // 只取消本机选择；聊天缓存归档保留，服务器账号、历史和设备授权保持有效。
+        if (
+          store.state.settings.serverUrl === serverUrl &&
+          store.state.settings.serverAccountId === id
+        ) {
+          ++historyEpoch;
+          store.selectHistory("server:pending");
+          store.state.settings.serverAccountId = "";
+          store.state.connection = {
+            phase: "disconnected",
+            detail: "已从本机移除桌宠，请选择其他桌宠或添加已有桌宠",
+            since: Date.now(),
+          };
+          store.state.historySync = {
+            enabled: false,
+            loading: false,
+            before: null,
+            hasMore: false,
+          };
+        }
+      }
+      store.removeServerAccount(serverUrl, id);
+      await store.save();
+      broadcast();
+      return;
+    }
+    case "serverDevices": {
+      const { server, token } = remoteAccount();
+      await ensureLocalServer(server);
+      return (await accountClient.devices(server, token)).devices;
+    }
+    case "revokeServerDevice": {
+      const { server, token } = remoteAccount();
+      const id = z.string().min(16).max(100).parse(args[0]);
+      const current = (await accountClient.devices(server, token)).devices.find(
+        (device) => device.id === id,
+      );
+      await accountClient.revoke(server, token, id);
+      if (current?.current) {
+        await bridge.disconnect();
+        await replyQueue;
+        ++historyEpoch;
+        store.selectHistory("server:pending");
+        store.state.settings.serverAccountId = "";
+        delete store.encrypted.serverToken;
+        store.state.credentials.serverToken = false;
+        await store.save();
+        broadcast();
+      }
+      return;
+    }
+    case "loadEarlierHistory":
+      return syncCloudHistory(true);
     case "exportAdapterConfig": {
       if (store.state.settings.connectionMode === "server")
         throw new Error("服务器插件由管理员配置；请导入个人服务器凭证后连接");
@@ -573,7 +877,15 @@ async function commands(
       await updateSettings({
         connectionMode: "server",
         serverUrl: parsed.data.serverUrl,
+        serverAccountId: "",
       });
+      // 切换服务器时 updateSettings 会清除原凭证，随后保存本次导入的凭证。
+      store.encrypted.serverToken = safeStorage
+        .encryptString(parsed.data.token)
+        .toString("base64");
+      store.state.credentials.serverToken = true;
+      await store.save();
+      broadcast();
       activity("服务器凭证已导入，点击连接服务器即可接入");
       return true;
     }
@@ -582,6 +894,17 @@ async function commands(
     case "send":
       return send(sendSchema.parse(args[0]));
     case "clearHistory": {
+      const currentHistory = store.state.history;
+      if (
+        store.state.settings.connectionMode === "server" &&
+        store.state.settings.serverAccountId
+      ) {
+        const { server, token, accountId } = remoteAccount();
+        await accountClient.clearHistory(server, token, accountId);
+      }
+      await replyQueue;
+      if (currentHistory !== store.state.history) return;
+      ++historyEpoch;
       const removed = store.state.history;
       store.state.history = [];
       await store.save();
@@ -768,37 +1091,6 @@ async function commands(
     case "hideWindow":
       window?.hide();
       return;
-    case "openDashboard": {
-      const section = z
-        .enum(["chat", "memory", "personality", "models", "plugins"])
-        .optional()
-        .parse(args[0]);
-      const url = new URL(store.state.settings.dashboardUrl);
-      const paths = {
-        chat: "/chat",
-        memory: "/resource/knowledge-graph",
-        personality: "/config/bot",
-        models: "/config/model",
-        plugins: "/plugins",
-      };
-      if (section) url.pathname = paths[section];
-      await shell.openExternal(url.toString());
-      return;
-    }
-    case "selectCorePath": {
-      const result = await dialog.showOpenDialog({
-        title: "选择 MaiBot 目录（包含 bot.py）",
-        properties: ["openDirectory"],
-      });
-      if (result.canceled) return null;
-      await access(join(result.filePaths[0], "bot.py"));
-      await updateSettings({ corePath: result.filePaths[0] });
-      return result.filePaths[0];
-    }
-    case "startCore":
-      return core.start(store.state.settings.corePath);
-    case "stopCore":
-      return core.stop();
     case "openDataFolder":
       await shell.openPath(store.directory);
       return;
@@ -825,13 +1117,15 @@ app.on("before-quit", (event) => {
   quitting = true;
   if (scheduler) clearInterval(scheduler);
   if (moodTimer) clearTimeout(moodTimer);
+  qqLogin = null;
+  accountClient.close();
   const disconnected = bridge.disconnect(false);
   globalShortcut.unregisterAll();
   tray?.destroy();
   void (async () => {
     try {
       await disconnected;
-      await core.stop();
+      await localServer.stop();
       await replyQueue;
       if (store) await store.flush();
     } finally {
@@ -947,6 +1241,7 @@ void app
         pet?.setIgnoreMouseEvents(!value, { forward: true });
     });
     bridge.on("status", (status: Snapshot["connection"]) => {
+      ++historyEpoch;
       if (
         status.phase === "connected" &&
         store.state.settings.connectionMode === "server" &&
@@ -959,6 +1254,20 @@ void app
         persist();
       }
       store.state.connection = status;
+      store.state.historySync = {
+        enabled: Boolean(store.state.settings.serverAccountId),
+        loading: false,
+        before: null,
+        hasMore: false,
+      };
+      if (
+        status.phase === "connected" &&
+        store.state.settings.connectionMode === "server" &&
+        store.state.settings.serverAccountId
+      )
+        void syncCloudHistory().catch(() =>
+          activity("服务器聊天记录同步失败，可重新连接后重试", "error"),
+        );
       if (status.phase !== "connected") store.state.conversationActive = false;
       activity(status.detail);
       if (status.phase !== "connected") setMood("idle");
@@ -966,6 +1275,37 @@ void app
     bridge.on("diagnostic", (message: string) =>
       activity(`消息解析：${message}`, "error"),
     );
+    bridge.on("history", (messages: ChatMessage[]) => {
+      if (!store.state.settings.serverAccountId) return;
+      const history = store.state.history;
+      const epoch = historyEpoch;
+      replyQueue = replyQueue
+        .catch(() => {})
+        .then(() => mergeCloudMessages(messages, history, epoch))
+        .catch(() => activity("同步服务器消息失败，请重新连接重试", "error"));
+    });
+    bridge.on("history_clear", () => {
+      const epoch = ++historyEpoch;
+      const history = store.state.history;
+      replyQueue = replyQueue
+        .catch(() => {})
+        .then(async () => {
+          if (epoch !== historyEpoch || history !== store.state.history) return;
+          const removed = history.splice(0);
+          store.state.historySync = {
+            enabled: true,
+            loading: false,
+            before: null,
+            hasMore: false,
+          };
+          await store.save();
+          await removeHistoryMedia(store.directory, removed);
+          broadcast();
+        })
+        .catch(() =>
+          activity("同步聊天记录清空操作失败，请重新连接重试", "error"),
+        );
+    });
     bridge.on(
       "reply",
       (
@@ -979,7 +1319,12 @@ void app
         const history = store.state.history;
         replyQueue = replyQueue
           .then(async () => {
-            if (history.some((message) => message.id === reply.id)) {
+            if (
+              history.some(
+                (message) =>
+                  message.id === reply.id && message.role === "assistant",
+              )
+            ) {
               await store.flush();
               acknowledge();
               return;
@@ -1011,11 +1356,7 @@ void app
           });
       },
     );
-    core.on("status", (status: Snapshot["core"]) => {
-      store.state.core = status;
-      activity(status.detail);
-    });
-    core.on("log", (text: string) => activity(text));
+    localServer.on("log", (text: string) => activity(text));
     createDashboard();
     createPet();
     createTray();
@@ -1053,7 +1394,12 @@ void app
           .catch((error) => activity(String(error), "error"));
       }
     }, 15000);
-    if (store.state.settings.autoConnect)
+    if (
+      store.state.settings.autoConnect &&
+      (store.state.settings.connectionMode === "local"
+        ? store.state.credentials.adapterToken
+        : store.state.credentials.serverToken && store.state.settings.serverUrl)
+    )
       void connectAdapter().catch((error) => activity(String(error), "error"));
   })
   .catch((error) => {

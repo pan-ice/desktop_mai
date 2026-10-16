@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   AudioLines,
   Bell,
-  Brain,
   ChevronRight,
   Coffee,
   Home,
@@ -32,7 +31,7 @@ const navigation = [
   { id: "chat", name: "和麦麦聊聊", icon: MessageCircle, note: "CHAT" },
   { id: "models", name: "角色衣橱", icon: PawPrint, note: "AVATAR" },
   { id: "senses", name: "声音与感知", icon: AudioLines, note: "SENSES" },
-  { id: "core", name: "内核与记忆", icon: Brain, note: "MAIBOT" },
+  { id: "core", name: "连接与账号", icon: Plug, note: "ACCOUNT" },
   { id: "settings", name: "偏好设置", icon: Settings2, note: "SETTINGS" },
 ] as const;
 
@@ -437,7 +436,9 @@ function HomePage({
             </span>
             <span>
               <span className="tiny-light green" />
-              记录保存在本机
+              {state.settings.serverAccountId
+                ? "聊天记录随账号同步"
+                : "聊天记录保存在本机"}
             </span>
           </div>
         </Panel>
@@ -453,7 +454,7 @@ function HomePage({
             在熟悉的内核里，慢慢认识彼此。
           </p>
           <button className="text-button" onClick={() => navigate("core")}>
-            探索内核与记忆
+            管理桌宠账号
             <ArrowUpRight size={15} />
           </button>
           <span className="note-paw">

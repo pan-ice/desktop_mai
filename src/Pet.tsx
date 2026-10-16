@@ -60,6 +60,8 @@ export function Pet() {
   return (
     <div
       className={`pet-surface ${state.settings.reducedMotion ? "reduce-motion" : ""}`}
+      // Electron 的同源窗口共享页面缩放；只缩放桌宠容器，避免影响控制面板。
+      style={{ zoom: state.settings.petScale }}
     >
       {bubble && (
         <div className="pet-bubble" data-pet-interactive>

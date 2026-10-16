@@ -1,7 +1,8 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { defaultSettings, emptySnapshot } from "../shared/defaults";
-import { settingsPatchSchema } from "../shared/schemas";
+import { serverUrlSchema, settingsPatchSchema } from "../shared/schemas";
 import type { CredentialKey, Snapshot } from "../shared/types";
 
 interface Persisted {
@@ -13,6 +14,7 @@ interface Persisted {
   petPosition?: { x: number; y: number };
   historyScope?: string;
   archivedHistories?: Record<string, Snapshot["history"]>;
+  removedServerAccounts?: Record<string, string[]>;
 }
 
 export class StateStore {
@@ -21,6 +23,7 @@ export class StateStore {
   petPosition: Persisted["petPosition"];
   private historyScope = "local";
   private archivedHistories: Record<string, Snapshot["history"]> = {};
+  private removedServerAccounts: Record<string, string[]> = {};
   private queue: Promise<void> = Promise.resolve();
   constructor(readonly directory: string) {}
 
@@ -45,7 +48,7 @@ export class StateStore {
           id: "adapter-migration-v2",
           level: "info",
           timestamp: Date.now(),
-          text: "已升级至独立插件接入。聊天记录与会话身份已保留，请在「内核与记忆」导出插件配置并完成安装。旧数据已备份。",
+          text: "已升级至独立插件接入。聊天记录与会话身份已保留，可在「连接与账号」的「旧版接入」中导出插件配置。旧数据已备份。",
         });
       }
       this.state.settings = {
@@ -55,6 +58,12 @@ export class StateStore {
       this.state.history = data.history.slice(-1000);
       this.historyScope = data.historyScope || "local";
       this.archivedHistories = data.archivedHistories || {};
+      this.removedServerAccounts = z
+        .record(
+          serverUrlSchema,
+          z.array(z.string().regex(/^pet_[a-f0-9]{32}$/)),
+        )
+        .parse(data.removedServerAccounts ?? {});
       this.state.models = data.models;
       this.encrypted = data.encrypted;
       this.petPosition = data.petPosition;
@@ -80,6 +89,7 @@ export class StateStore {
         petPosition: this.petPosition,
         historyScope: this.historyScope,
         archivedHistories: this.archivedHistories,
+        removedServerAccounts: this.removedServerAccounts,
       } satisfies Persisted,
       null,
       2,
@@ -113,5 +123,26 @@ export class StateStore {
       this.state.history,
       ...Object.values(this.archivedHistories),
     ].flat();
+  }
+
+  removedAccounts(serverUrl: string): string[] {
+    if (!serverUrl) return [];
+    return [...(this.removedServerAccounts[new URL(serverUrl).href] || [])];
+  }
+
+  removeServerAccount(serverUrl: string, id: string) {
+    const key = new URL(serverUrl).href;
+    this.removedServerAccounts[key] = [
+      ...new Set([...this.removedAccounts(serverUrl), id]),
+    ];
+  }
+
+  restoreServerAccount(serverUrl: string, id: string) {
+    const key = new URL(serverUrl).href;
+    const remaining = this.removedAccounts(serverUrl).filter(
+      (removed) => removed !== id,
+    );
+    if (remaining.length) this.removedServerAccounts[key] = remaining;
+    else delete this.removedServerAccounts[key];
   }
 }

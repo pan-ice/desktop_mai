@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+export function isLocalServerUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "ws:" &&
+      ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+      url.pathname === "/desktop" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const serverUrlSchema = z
   .string()
   .url()
@@ -48,6 +65,10 @@ export const settingsPatchSchema = z
     userId: z.string().trim().min(1).max(100),
     connectionMode: z.enum(["local", "server"]),
     serverUrl: z.union([z.literal(""), serverUrlSchema]),
+    serverAccountId: z.union([
+      z.literal(""),
+      z.string().regex(/^pet_[a-f0-9]{32}$/),
+    ]),
     adapterPort: z.number().int().min(1024).max(65535),
     adapterScope: z.string().trim().max(100),
     platform: z.string().regex(/^[a-z][a-z0-9_\-]{1,63}$/),

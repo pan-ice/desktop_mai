@@ -169,7 +169,12 @@ export class MaiBotBridge extends EventEmitter {
       "正在连接 MaiBot 服务器…",
     );
     const socket = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(this.settings?.serverAccountId
+          ? { "X-Mai-Account": this.settings.serverAccountId }
+          : {}),
+      },
       handshakeTimeout: 8000,
       maxPayload: MAX_FRAME,
       perMessageDeflate: false,
@@ -182,7 +187,7 @@ export class MaiBotBridge extends EventEmitter {
         this.remoteFatalGeneration = generation;
         this.status(
           "error",
-          "服务器拒绝接入凭证，请重新导入管理员发给你的凭证文件",
+          "服务器拒绝设备凭证，请通过 QQ 重新登录，或重新导入管理员凭证",
         );
       }
       socket.terminate();
@@ -233,6 +238,12 @@ export class MaiBotBridge extends EventEmitter {
           peer.instanceId = frame.instanceId;
           peer.startedAt = frame.startedAt;
           peer.userId = frame.identity.userId;
+          if (
+            remote &&
+            this.settings.serverAccountId &&
+            peer.userId !== this.settings.serverAccountId
+          )
+            throw new Error("服务器返回了其他桌宠账号");
           this.write(socket, {
             v: 1,
             type: "welcome",
@@ -261,7 +272,9 @@ export class MaiBotBridge extends EventEmitter {
           this.status(
             "connected",
             remote
-              ? `服务器已连接 · 用户 ${peer.userId} · 会话已确认`
+              ? this.settings.serverAccountId
+                ? "服务器已连接 · 桌宠账号已确认"
+                : `服务器已连接 · 用户 ${peer.userId} · 会话已确认`
               : "MaiBot 插件已连接 · 协议 v1 · 会话已确认",
           );
           return;
@@ -281,6 +294,10 @@ export class MaiBotBridge extends EventEmitter {
                 : new Error(message),
             );
           }
+        } else if (remote && frame.type === "history") {
+          this.emit("history", frame.messages);
+        } else if (remote && frame.type === "history_clear") {
+          this.emit("history_clear");
         } else if (frame.type === "reply") {
           if (frame.sessionId !== peer.sessionId)
             throw new Error("插件返回了其他会话的消息");
@@ -377,8 +394,13 @@ export class MaiBotBridge extends EventEmitter {
       socket.send(JSON.stringify(frame), () => {});
   }
 
-  send(text: string, image?: string, id: string = randomUUID()): Promise<void> {
-    return this.request("chat", text, image, id);
+  send(
+    text: string,
+    image?: string,
+    id: string = randomUUID(),
+    source?: string,
+  ): Promise<void> {
+    return this.request("chat", text, image, id, source);
   }
   proactive(intent: string, id: string = randomUUID()): Promise<void> {
     return this.request("proactive", intent, undefined, id);
@@ -389,6 +411,7 @@ export class MaiBotBridge extends EventEmitter {
     text: string,
     image: string | undefined,
     id: string,
+    source?: string,
   ): Promise<void> {
     const socket = this.active?.socket;
     if (
@@ -399,7 +422,9 @@ export class MaiBotBridge extends EventEmitter {
       return Promise.reject(new Error("请先连接 MaiBot 桌宠适配器"));
     if (this.pending.size >= 32 || this.pending.has(id))
       return Promise.reject(new Error("请求过多或请求 ID 重复"));
-    const payload = JSON.stringify(buildRequest(method, text, image, id));
+    const payload = JSON.stringify(
+      buildRequest(method, text, image, id, source),
+    );
     if (Buffer.byteLength(payload) > MAX_FRAME)
       return Promise.reject(new Error("消息超过协议上限"));
     return new Promise((resolve, reject) => {

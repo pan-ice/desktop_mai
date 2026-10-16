@@ -1,5 +1,7 @@
 import * as PIXI from "pixi.js";
+import type { Cubism4InternalModel } from "pixi-live2d-display/cubism4";
 import type { ImportedModel, Mood } from "../../shared/types";
+import { createHairDynamics } from "./live2d-hair";
 
 declare global {
   interface Window {
@@ -42,13 +44,22 @@ export async function mount(
   window.PIXI = PIXI;
   const { Live2DModel } = await import("pixi-live2d-display/cubism4");
   Live2DModel.registerTicker(PIXI.Ticker);
+  // 小尺寸角色用两倍采样改善边缘，高 DPI 屏幕按实际像素密度渲染。
+  const renderResolution = () => {
+    const bounds = host.getBoundingClientRect();
+    const scale = Math.max(
+      host.clientWidth ? bounds.width / host.clientWidth : 1,
+      host.clientHeight ? bounds.height / host.clientHeight : 1,
+    );
+    return Math.max(2, (window.devicePixelRatio || 1) * scale);
+  };
   const app = new PIXI.Application({
     width: host.clientWidth || 260,
     height: host.clientHeight || 300,
     backgroundAlpha: 0,
     antialias: true,
     autoDensity: true,
-    resolution: Math.min(devicePixelRatio, 1.5),
+    resolution: renderResolution(),
   });
   let avatar: InstanceType<typeof Live2DModel>;
   try {
@@ -66,6 +77,7 @@ export async function mount(
   const resize = () => {
     const width = host.clientWidth || 260,
       height = host.clientHeight || 300;
+    app.renderer.resolution = renderResolution();
     app.renderer.resize(width, height);
     const scale =
       Math.min(width / original.width, height / original.height) * 0.94;
@@ -74,12 +86,27 @@ export async function mount(
     avatar.position.set(width / 2, height);
   };
   const observer = new ResizeObserver(resize);
-  observer.observe(host);
+  observer.observe(host, { box: "device-pixel-content-box" });
   resize();
+  // Electron 缩放或切换屏幕时，CSS 尺寸可能不变，仍需更新画布像素密度。
+  let densityQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  const densityChanged = () => {
+    densityQuery.removeEventListener("change", densityChanged);
+    densityQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    densityQuery.addEventListener("change", densityChanged);
+    resize();
+  };
+  densityQuery.addEventListener("change", densityChanged);
+  window.addEventListener("resize", resize);
   let elapsed = 0;
-  const tick = () => {
+  const internal = avatar.internalModel as Cubism4InternalModel;
+  const updateHair = reduced
+    ? undefined
+    : createHairDynamics(internal.coreModel, Boolean(internal.physics));
+  const updateMood = () => {
+    updateHair?.(avatar.deltaTime / 1000);
     elapsed += app.ticker.deltaMS / 1000;
-    const core = avatar.internalModel.coreModel as {
+    const core = internal.coreModel as {
       setParameterValueById(id: string, value: number): void;
     };
     core.setParameterValueById(
@@ -91,7 +118,8 @@ export async function mount(
       core.setParameterValueById("ParamEyeROpen", 0);
     }
   };
-  app.ticker.add(tick);
+  // 在动作、眨眼和物理计算之后写入，避免它们覆盖口型与睡眠闭眼。
+  internal.on("beforeModelUpdate", updateMood);
   app.ticker.maxFPS = reduced ? 20 : 30;
   const visibility = () => {
     if (document.hidden) app.stop();
@@ -100,8 +128,10 @@ export async function mount(
   document.addEventListener("visibilitychange", visibility);
   return () => {
     observer.disconnect();
+    densityQuery.removeEventListener("change", densityChanged);
+    window.removeEventListener("resize", resize);
     document.removeEventListener("visibilitychange", visibility);
-    app.ticker.remove(tick);
+    internal.off("beforeModelUpdate", updateMood);
     avatar.destroy();
     app.destroy(true, { children: true, texture: true, baseTexture: true });
   };

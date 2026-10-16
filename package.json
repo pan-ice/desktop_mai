@@ -1,6 +1,6 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
   "author": "Mai Desktop Contributors",
@@ -17,10 +17,13 @@
     "test:adapter": "vitest run --config vitest.adapter.config.ts",
     "test:plugin": "node scripts/test-plugin.mjs",
     "test:desktop": "node scripts/desktop-smoke.mjs",
+    "test:window-scale": "node scripts/window-scale-smoke.mjs --dev && node scripts/window-scale-smoke.mjs",
+    "test:live2d": "node scripts/live2d-smoke.mjs",
     "test:server-desktop": "node scripts/server-desktop-smoke.mjs",
+    "test:qq-login": "node scripts/qq-login-smoke.mjs",
+    "test:local-server": "node scripts/local-server-smoke.mjs",
     "test:portable": "node scripts/portable-smoke.mjs",
     "verify:release": "node scripts/verify-release.mjs",
-    "test:core-host": "node scripts/core-host-smoke.mjs",
     "format": "prettier --write electron shared src tests scripts *.ts package.json tsconfig.json index.html",
     "dist:adapter": "node scripts/package-adapter.mjs",
     "dist:win": "npm run build && npm run dist:adapter && node scripts/package-win.mjs"
@@ -72,12 +75,6 @@
       "package.json"
     ],
     "asar": true,
-    "extraResources": [
-      {
-        "from": "resources/core_host.py",
-        "to": "core_host.py"
-      }
-    ],
     "win": {
       "icon": "resources/icon.ico",
       "target": [

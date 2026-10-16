@@ -1,3 +1,9 @@
+import type {
+  AuthorizedDevice,
+  PetAccount,
+  QQLoginChallenge,
+} from "./accounts";
+
 export type ConnectionPhase =
   "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
 export type Mood = "idle" | "happy" | "thinking" | "speaking" | "sleeping";
@@ -11,6 +17,7 @@ export interface Settings {
   userId: string;
   connectionMode: "local" | "server";
   serverUrl: string;
+  serverAccountId: string;
   adapterPort: number;
   adapterScope: string;
   platform: string;
@@ -96,12 +103,18 @@ export interface Snapshot {
     userId?: string;
   };
   history: ChatMessage[];
+  historySync: {
+    enabled: boolean;
+    loading: boolean;
+    hasMore: boolean;
+    before: number | null;
+  };
+  removedServerAccounts: string[];
   models: ImportedModel[];
   activity: Activity[];
   mood: Mood;
   focusUntil: number | null;
   conversationActive: boolean;
-  core: { running: boolean; pid?: number; detail: string };
   desktop: boolean;
   version: string;
 }
@@ -128,6 +141,20 @@ export interface DesktopApi {
   connect(): Promise<void>;
   exportAdapterConfig(): Promise<boolean>;
   importServerConnection(): Promise<boolean>;
+  prepareLocalServer(): Promise<string | null>;
+  beginQQLogin(
+    serverUrl: string,
+    deviceName: string,
+  ): Promise<QQLoginChallenge>;
+  pollQQLogin(): Promise<"pending" | "confirmed" | "expired">;
+  cancelQQLogin(): Promise<void>;
+  serverAccounts(): Promise<PetAccount[]>;
+  createServerAccount(name: string): Promise<PetAccount>;
+  selectServerAccount(id: string): Promise<void>;
+  removeServerAccount(id: string): Promise<void>;
+  serverDevices(): Promise<AuthorizedDevice[]>;
+  revokeServerDevice(id: string): Promise<void>;
+  loadEarlierHistory(): Promise<void>;
   disconnect(): Promise<void>;
   send(input: SendInput): Promise<void>;
   clearHistory(): Promise<void>;
@@ -146,12 +173,6 @@ export interface DesktopApi {
   hideWindow(): Promise<void>;
   petDrag(action: "start" | "move" | "end"): void;
   petInteractive(interactive: boolean): void;
-  openDashboard(
-    section?: "chat" | "memory" | "personality" | "models" | "plugins",
-  ): Promise<void>;
-  selectCorePath(): Promise<string | null>;
-  startCore(): Promise<void>;
-  stopCore(): Promise<void>;
   openDataFolder(): Promise<void>;
   quit(): Promise<void>;
 }

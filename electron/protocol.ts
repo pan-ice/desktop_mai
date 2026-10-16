@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cloudMessageSchema } from "../shared/accounts";
 import type { Attachment, Settings } from "../shared/types";
 
 export const PROTOCOL = "mai-desktop";
@@ -36,6 +37,14 @@ const segmentSchema = z.discriminatedUnion("type", [
 ]);
 
 export const pluginFrameSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      v: z.literal(1),
+      type: z.literal("history"),
+      messages: z.array(cloudMessageSchema).max(100),
+    })
+    .strict(),
+  z.object({ v: z.literal(1), type: z.literal("history_clear") }).strict(),
   z
     .object({
       v: z.literal(1),
@@ -99,13 +108,18 @@ export function buildRequest(
   text: string,
   image: string | undefined,
   id: string,
+  source?: string,
 ) {
   return {
     v: 1,
     type: "request",
     method,
     id,
-    params: { text, ...(image ? { image } : {}) },
+    params: {
+      text,
+      ...(image ? { image } : {}),
+      ...(source ? { source } : {}),
+    },
   };
 }
 

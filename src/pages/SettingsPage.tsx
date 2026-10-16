@@ -152,7 +152,11 @@ export function SettingsPage({ state }: { state: Snapshot }) {
           </Panel>
           <Panel
             title="留在这台电脑里的小事"
-            subtitle="设置、模型与最近 1,000 条聊天记录存储在本机。"
+            subtitle={
+              state.settings.serverAccountId
+                ? "设置和模型保存在本机，聊天记录随账号同步。"
+                : "设置、模型与最近的聊天记录保存在本机。"
+            }
           >
             <div className="data-storage">
               <FolderOpen size={26} strokeWidth={1.3} />

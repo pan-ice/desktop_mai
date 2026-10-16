@@ -79,8 +79,14 @@ export function ChatPage({
           </button>
           <button
             className={`icon-button ${clear ? "danger" : ""}`}
-            aria-label={clear ? "确认清空本地聊天记录" : "清空本地聊天记录"}
-            title={clear ? "再点一次确认清空" : "清空本地聊天记录"}
+            aria-label={clear ? "确认清空聊天记录" : "清空聊天记录"}
+            title={
+              clear
+                ? state.historySync.enabled
+                  ? "再次点击会清空此桌宠的服务器记录和所有设备缓存"
+                  : "再点一次确认清空"
+                : "清空聊天记录"
+            }
             onClick={() => {
               if (!clear) {
                 setClear(true);
@@ -88,7 +94,9 @@ export function ChatPage({
               }
               void perform(
                 () => api.clearHistory(),
-                "已清空桌宠本地记录，MaiBot 的长期记忆仍可在内核中管理",
+                state.historySync.enabled
+                  ? "已清空此桌宠的服务器聊天记录，长期记忆保留"
+                  : "已清空桌宠本地记录，MaiBot 的长期记忆仍可在内核中管理",
               );
               setClear(false);
             }}
@@ -122,6 +130,18 @@ export function ChatPage({
           </div>
         )}
         <div className="chat-messages" aria-live="polite">
+          {state.historySync.loading && (
+            <p className="helper-text">正在同步服务器聊天记录…</p>
+          )}
+          {state.historySync.hasMore && (
+            <button
+              className="text-button"
+              disabled={state.historySync.loading}
+              onClick={() => void perform(() => api.loadEarlierHistory())}
+            >
+              加载更早的聊天记录
+            </button>
+          )}
           {state.history.length === 0 ? (
             <Empty
               icon={<MessageCircle size={32} strokeWidth={1.2} />}
@@ -133,7 +153,10 @@ export function ChatPage({
             </Empty>
           ) : (
             state.history.map((message) => (
-              <div key={message.id} className={`message-row ${message.role}`}>
+              <div
+                key={`${message.role}:${message.id}`}
+                className={`message-row ${message.role}`}
+              >
                 <span className="bubble-avatar">
                   {message.role === "assistant" ? (
                     <PawPrint size={17} />

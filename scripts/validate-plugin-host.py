@@ -45,7 +45,8 @@ with TemporaryDirectory(prefix="mai-plugin-contract-", dir=cache) as directory:
         if adapter is None:
             raise RuntimeError(json.dumps(loader.failed_plugins, ensure_ascii=False))
         declarations = adapter.instance.get_components()
-        assert declarations[0]["metadata"]["route_type"] == "duplex"
+        gateways = [item for item in declarations if item["type"] == "MESSAGE_GATEWAY"]
+        assert gateways and all(item["metadata"]["route_type"] == "duplex" for item in gateways)
     finally:
         for item in loaded:
             loader.purge_plugin_modules(item.plugin_id, item.plugin_dir)

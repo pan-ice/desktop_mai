@@ -115,7 +115,8 @@ try {
   }, "控制面板未打开");
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.getByRole("button", { name: "内核与记忆", exact: true }).click();
+  await page.getByRole("button", { name: "连接与账号", exact: true }).click();
+  await page.locator(".legacy-connection > summary").click();
   // 先保留一个本机凭证，确认导入服务器账号不会覆盖它。
   await page.evaluate(() =>
     window.mai.setCredential(
@@ -137,9 +138,6 @@ try {
     await page
       .getByRole("button", { name: "导入服务器凭证", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "连接服务器", exact: true })
-      .waitFor();
     assert.equal(
       await page
         .getByRole("heading", { name: "本地内核进程", exact: true })
@@ -152,7 +150,6 @@ try {
         .count(),
       0,
     );
-    await page.getByRole("button", { name: "连接服务器", exact: true }).click();
     await waitFor(
       async () =>
         (await page.evaluate(() => window.mai.snapshot())).connection.userId ===
@@ -194,7 +191,7 @@ try {
   assert.deepEqual(errors, []);
   assert.ok(!stderr.includes("Traceback"));
   console.log(
-    "PASS 多人桌面流程：凭证导入、连接服务器、真实会话、账号历史切换、独立加密凭证、隐藏管理入口",
+    "PASS 多人桌面流程：旧版凭证导入并连接、真实会话、账号历史切换、独立加密凭证、无内核管理入口",
   );
   console.log(`截图：${join(base, "server.png")}`);
 } finally {

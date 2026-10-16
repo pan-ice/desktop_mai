@@ -122,7 +122,9 @@ try {
     "rgba(0, 0, 0, 0)",
   );
   await pet.screenshot({ path: join(base, "pet.png"), omitBackground: true });
-  await page.getByRole("button", { name: "内核与记忆", exact: true }).click();
+  await page.getByRole("button", { name: "连接与账号", exact: true }).click();
+  await page.locator(".legacy-connection > summary").click();
+  await page.locator(".legacy-local > summary").click();
   await page
     .getByRole("spinbutton", { name: "本机接入端口" })
     .fill(String(adapterPort));

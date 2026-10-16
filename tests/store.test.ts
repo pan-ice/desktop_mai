@@ -11,6 +11,43 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 describe("持久化版本迁移", () => {
+  it("从本机移除桌宠后重启仍保留偏好和聊天记录，其他服务器与设备不受影响", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "removed-account-"));
+    directories.push(directory);
+    const server = "wss://mai.example.com/desktop";
+    const otherServer = "wss://other.example.com/desktop";
+    const id = "pet_" + "a".repeat(32);
+    const store = new StateStore(directory);
+    store.selectHistory("server:pet-history");
+    store.state.history.push({
+      id: "retained",
+      text: "移除后仍保留的聊天记录",
+      role: "user",
+      source: "text",
+      timestamp: 1,
+    });
+    store.selectHistory("server:pending");
+    store.removeServerAccount(server, id);
+    await store.save();
+    const restored = new StateStore(directory);
+    await restored.load();
+    expect(restored.removedAccounts(server)).toEqual([id]);
+    expect(restored.removedAccounts(otherServer)).toEqual([]);
+    expect(new StateStore("另一台设备").removedAccounts(server)).toEqual([]);
+    restored.restoreServerAccount(server, id);
+    restored.selectHistory("server:pet-history");
+    expect(restored.state.history.map((message) => message.id)).toEqual([
+      "retained",
+    ]);
+    await restored.save();
+    const afterRestoring = new StateStore(directory);
+    await afterRestoring.load();
+    expect(afterRestoring.removedAccounts(server)).toEqual([]);
+    expect(afterRestoring.state.history[0].text).toBe("移除后仍保留的聊天记录");
+  });
+
   it("切换服务器用户后分别保留历史，重新加载和切回后仍归属于原账号", async () => {
     const base = resolve(".cache/tests");
     await mkdir(base, { recursive: true });
