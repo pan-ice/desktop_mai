@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { historyPageSchema } from "../shared/accounts";
 import { afterEach, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -67,3 +69,56 @@ it.each(["wav", "ogg"])(
     await expect(readFile(mediaFile(folder, saved.dataUrl))).rejects.toThrow();
   },
 );
+
+it("超过旧 9/16 MB 上限的音频可从即时回复和历史恢复，图片仍受原有限制", async () => {
+  await mkdir(resolve(".cache/tests"), { recursive: true });
+  folder = await mkdtemp(resolve(".cache/tests/media-large-"));
+  const bytes = Buffer.alloc(20 * 1024 * 1024, 42);
+  const original = {
+    type: "audio" as const,
+    dataUrl: "data:audio/mpeg;base64," + bytes.toString("base64"),
+  };
+  const frame = pluginFrameSchema.parse({
+    v: 1,
+    type: "reply",
+    id: "large",
+    sessionId: "session",
+    segments: [original],
+  });
+  if (frame.type !== "reply") throw new Error("错误测试数据");
+  const history = historyPageSchema.parse({
+    messages: [
+      {
+        id: "large",
+        role: "assistant",
+        text: "",
+        timestamp: 1,
+        source: "core",
+        attachments: [original],
+      },
+    ],
+    before: 1,
+    hasMore: false,
+  });
+  expect(history.messages[0].attachments![0].type).toBe("audio");
+  const saved = await saveAttachment(folder, parseReply(frame).attachments[0]);
+  const actual = await readFile(mediaFile(folder, saved.dataUrl));
+  expect(actual.length).toBe(bytes.length);
+  expect(createHash("sha256").update(actual).digest("hex")).toBe(
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+  expect(
+    pluginFrameSchema.safeParse({
+      v: 1,
+      type: "reply",
+      id: "image",
+      sessionId: "session",
+      segments: [
+        {
+          type: "image",
+          dataUrl: "data:image/png;base64," + bytes.toString("base64"),
+        },
+      ],
+    }).success,
+  ).toBe(false);
+});

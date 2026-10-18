@@ -1,3 +1,4 @@
+import { MEDIA_SAVE_TIMEOUT } from "../shared/media-limits";
 import { EventEmitter } from "node:events";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
@@ -12,6 +13,7 @@ import {
   buildRequest,
   identity,
   MAX_FRAME,
+  MAX_REPLY_FRAME,
   parseReply,
   pluginFrameSchema,
   REQUIRED_CAPABILITIES,
@@ -112,7 +114,7 @@ export class MaiBotBridge extends EventEmitter {
         });
         const wss = new WebSocketServer({
           noServer: true,
-          maxPayload: MAX_FRAME,
+          maxPayload: MAX_REPLY_FRAME,
           perMessageDeflate: false,
         });
         this.server = server;
@@ -200,7 +202,7 @@ export class MaiBotBridge extends EventEmitter {
           : {}),
       },
       handshakeTimeout: 8000,
-      maxPayload: MAX_FRAME,
+      maxPayload: MAX_REPLY_FRAME,
       perMessageDeflate: false,
       followRedirects: false,
       ...(ca?.length ? { ca, rejectUnauthorized: true } : {}),
@@ -406,7 +408,7 @@ export class MaiBotBridge extends EventEmitter {
             };
             const timer = setTimeout(
               () => complete(new Error("保存回复超时")),
-              12000,
+              MEDIA_SAVE_TIMEOUT,
             );
             this.saveWaiters.add(complete);
             this.emit("reply", reply, complete);

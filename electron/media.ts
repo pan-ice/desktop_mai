@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Attachment, ChatMessage } from "../shared/types";
+import { MAX_AUDIO_BYTES } from "../shared/media-limits";
 
 const mediaName = /^[0-9a-f-]{36}\.(png|jpg|gif|webp|mp3|wav|ogg)$/;
 export async function saveAttachment(
@@ -14,7 +15,9 @@ export async function saveAttachment(
     );
   if (!match) throw new Error("不支持的消息媒体格式");
   const bytes = Buffer.from(match[2], "base64");
-  if (bytes.length > 16 * 1024 * 1024) throw new Error("媒体文件超过 16 MB");
+  const audio = match[1].startsWith("audio/");
+  if (bytes.length > (audio ? MAX_AUDIO_BYTES : 16 * 1024 * 1024))
+    throw new Error(audio ? "音频文件超过 100 MiB" : "图片文件超过 16 MiB");
   const extension = (
     {
       "image/png": "png",

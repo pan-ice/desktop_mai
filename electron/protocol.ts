@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { cloudMessageSchema } from "../shared/accounts";
+import {
+  imageAttachmentSchema,
+  audioAttachmentSchema,
+} from "../shared/media-limits";
+export { MAX_REPLY_FRAME } from "../shared/media-limits";
 import type { Attachment, Settings } from "../shared/types";
 
 export const PROTOCOL = "mai-desktop";
@@ -16,24 +21,8 @@ const identitySchema = z
   .strict();
 const segmentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string().max(12000) }).strict(),
-  z
-    .object({
-      type: z.literal("image"),
-      dataUrl: z
-        .string()
-        .max(12_000_100)
-        .regex(/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("audio"),
-      dataUrl: z
-        .string()
-        .max(12_000_100)
-        .regex(/^data:audio\/(mpeg|wav|ogg);base64,[A-Za-z0-9+/=]+$/),
-    })
-    .strict(),
+  imageAttachmentSchema,
+  audioAttachmentSchema,
 ]);
 
 export const pluginFrameSchema = z.discriminatedUnion("type", [

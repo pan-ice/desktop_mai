@@ -7,7 +7,8 @@ import {
   historyPageSchema,
   petAccountSchema,
 } from "../shared/accounts";
-import { MAX_FRAME } from "./protocol";
+import { MAX_REPLY_FRAME } from "./protocol";
+import { HISTORY_TIMEOUT } from "../shared/media-limits";
 import {
   isCertificateValidationError,
   type CertificateAuthorityProvider,
@@ -75,7 +76,7 @@ export class AccountClient {
     const socket = new WebSocket(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       handshakeTimeout: 10000,
-      maxPayload: MAX_FRAME,
+      maxPayload: MAX_REPLY_FRAME,
       perMessageDeflate: false,
       ...(ca?.length ? { ca, rejectUnauthorized: true } : {}),
     });
@@ -161,7 +162,8 @@ export class AccountClient {
     url.pathname = "/account";
     if (this.inflight >= 32) throw new Error("账号请求过多，请稍后重试");
     const generation = this.generation;
-    const deadline = Date.now() + 15000;
+    const deadline =
+      Date.now() + (method === "history.list" ? HISTORY_TIMEOUT : 15_000);
     this.inflight++;
     try {
       let channel: AccountChannel;

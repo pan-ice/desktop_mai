@@ -15,6 +15,8 @@ MaiBot 由部署方独立安装，客户端仓库不包含 `MaiBot/`。仅在需
 
 ![陪伴空间预览](docs/preview.png)
 
+0.4.1 支持 **100 MiB 原始音频**，即时回复、云端历史恢复和本地媒体保存使用相同上限；需同步更新网关插件与中继至 0.4.5。用户输入和图片限制保持原值。音乐插件下载超过其自身限制的文件时，还需将 `music.cache_max_file_size_mb` 设置为 `100` 或更大。
+
 ## 启动
 
 Node.js **22.12+**（开发环境已使用 Node.js 24 验证）。
@@ -38,7 +40,7 @@ Windows 便携版构建：
 npm run dist:win
 ```
 
-生成 `release/Mai-Desktop-Pet-0.4.0-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.0.zip`。桌宠无需安装 Node.js 即可运行；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
+生成 `release/Mai-Desktop-Pet-0.4.1-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.0.zip`。桌宠无需安装 Node.js 即可运行；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
 
 ## 官方消息协议接入
 

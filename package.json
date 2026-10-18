@@ -1,6 +1,6 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
   "author": "Mai Desktop Contributors",
@@ -14,6 +14,7 @@
     "start": "electron .",
     "test": "vitest run",
     "test:protocol": "npm run test:message-adapter",
+    "test:large-audio": "vitest run --config vitest.large-audio.config.ts",
     "test:adapter": "vitest run --config vitest.adapter.config.ts",
     "test:message-adapter": "node scripts/test-message-adapter.mjs",
     "test:message-adapter-desktop": "node scripts/message-adapter-smoke.mjs",

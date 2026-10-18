@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attachmentSchema } from "./media-limits";
 
 export const petAccountSchema = z
   .object({
@@ -25,22 +26,7 @@ export const cloudMessageSchema = z
     timestamp: z.number().int().nonnegative(),
     source: z.enum(["text", "voice", "screen", "proactive", "core"]),
     delivery: z.enum(["sent", "failed", "unknown"]).optional(),
-    attachments: z
-      .array(
-        z
-          .object({
-            type: z.enum(["image", "audio"]),
-            dataUrl: z
-              .string()
-              .max(12_000_100)
-              .regex(
-                /^data:(?:image\/(?:png|jpeg|webp|gif)|audio\/(?:mpeg|wav|ogg));base64,[A-Za-z0-9+/=]+$/,
-              ),
-          })
-          .strict(),
-      )
-      .max(100)
-      .optional(),
+    attachments: z.array(attachmentSchema).max(100).optional(),
   })
   .strict();
 export const historyPageSchema = z
