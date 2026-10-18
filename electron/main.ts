@@ -1290,6 +1290,7 @@ void app
   .then(async () => {
     store = new StateStore(app.getPath("userData"));
     await store.load();
+    store.state.version = app.getVersion();
     serverCertificates = new ServerCertificateStore(store.directory);
     try {
       await serverCertificates.load();
