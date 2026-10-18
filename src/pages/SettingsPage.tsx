@@ -87,6 +87,12 @@ export function SettingsPage({ state }: { state: Snapshot }) {
             />
             <SettingToggle
               state={state}
+              name="petPositionLocked"
+              label="锁定桌宠位置"
+              hint="固定当前位置；关闭后可拖动角色，点击互动仍然可用。"
+            />
+            <SettingToggle
+              state={state}
               name="clickThrough"
               label="鼠标穿透"
               hint="透明区域不挡操作；Ctrl + Shift + M 可以恢复交互。"

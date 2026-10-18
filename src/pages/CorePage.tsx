@@ -1,9 +1,19 @@
 import { useState } from "react";
-import { LoaderCircle, Play, Plug, RefreshCw, Square } from "lucide-react";
-import { api, perform } from "../api";
+import {
+  LoaderCircle,
+  Play,
+  Plug,
+  RefreshCw,
+  ShieldCheck,
+  Square,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { api, perform, showToast } from "../api";
 import { Field, Panel, Status } from "../components/ui";
 import { ServerAccounts } from "../components/ServerAccounts";
 import { LegacyConnection } from "../components/LegacyConnection";
+import { MessageAdapterConnection } from "../components/MessageAdapterConnection";
 import { useSettingsDraft } from "./SensesPage";
 import type { Snapshot } from "../../shared/types";
 
@@ -15,8 +25,23 @@ export function CorePage({ state }: { state: Snapshot }) {
     state.settings.connectionMode === "server" &&
     state.settings.serverAccountId &&
     state.settings.serverUrl === draft.serverUrl;
-  const active = ["connected", "connecting", "reconnecting"].includes(
-    state.connection.phase,
+  const active =
+    state.settings.connectionMode === "server" &&
+    ["connected", "connecting", "reconnecting"].includes(
+      state.connection.phase,
+    );
+  let wssHost = "";
+  try {
+    const url = new URL(draft.serverUrl);
+    if (url.protocol === "wss:") wssHost = url.hostname.toLowerCase();
+  } catch {
+    /* 地址输入未完成时不启用证书操作。 */
+  }
+  const certificate = state.serverCertificates.find(
+    (item) => item.host === wssHost,
+  );
+  const certificateExpired = Boolean(
+    certificate && certificate.validTo <= Date.now(),
   );
   const saveConnection = async () => {
     setBusy(true);
@@ -39,15 +64,20 @@ export function CorePage({ state }: { state: Snapshot }) {
       <div className="page-heading">
         <div>
           <h1>连接与账号</h1>
-          <p>通过 QQ 登录，选择你的桌宠，继续上次的聊天。</p>
+          <p>连接自己的 MaiBot，或通过 QQ 登录桌宠服务器。</p>
         </div>
         <Status state={state} />
       </div>
       <div className="settings-columns core-columns">
         <div className="settings-stack">
+          <MessageAdapterConnection state={state} />
           <Panel
             title="服务器连接"
-            subtitle={state.connection.detail}
+            subtitle={
+              state.settings.connectionMode === "server"
+                ? state.connection.detail
+                : "使用服务方提供的地址，通过 QQ 登录。"
+            }
             action={<Plug size={19} className="muted" />}
           >
             <form
@@ -58,16 +88,93 @@ export function CorePage({ state }: { state: Snapshot }) {
             >
               <Field
                 label="服务器地址"
-                hint="填写服务方提供的 wss://域名/desktop 地址。"
+                hint="填写服务方提供的 ws:// 或 wss:// 地址；公网建议使用 wss://。"
               >
                 <input
                   type="url"
                   required
                   value={draft.serverUrl}
-                  placeholder="wss://mai.example.com/desktop"
+                  placeholder="ws://192.168.1.10:18766/desktop"
                   onChange={(event) => change("serverUrl", event.target.value)}
                 />
               </Field>
+              <div
+                className={`server-certificate ${certificate ? "trusted" : ""} ${certificateExpired ? "expired" : ""}`}
+              >
+                <ShieldCheck size={18} />
+                <div>
+                  <strong>
+                    {certificate
+                      ? certificateExpired
+                        ? "自定义证书已过期"
+                        : "自定义 WSS 证书已导入"
+                      : "自签名或私有 CA"}
+                  </strong>
+                  {certificate ? (
+                    <>
+                      <small>
+                        {certificate.host} · {certificate.certificateCount}{" "}
+                        张证书 · 有效至{" "}
+                        {new Date(certificate.validTo).toLocaleDateString()}
+                      </small>
+                      <code title={certificate.fingerprint256}>
+                        SHA-256{" "}
+                        {certificate.fingerprint256
+                          .split(":")
+                          .slice(0, 6)
+                          .join(":")}
+                        …
+                      </code>
+                    </>
+                  ) : (
+                    <small>
+                      WSS 使用非公开证书时，在这里导入 CA
+                      或服务器证书；不要导入私钥。
+                    </small>
+                  )}
+                </div>
+                <span className="server-certificate-actions">
+                  <button
+                    type="button"
+                    className="text-button small"
+                    disabled={busy || !wssHost}
+                    title={
+                      wssHost
+                        ? "导入 PEM、CRT、CER 或 DER 证书"
+                        : "请先填写 wss:// 服务器地址"
+                    }
+                    onClick={() => {
+                      setBusy(true);
+                      void perform(async () => {
+                        if (await api.importServerCertificate(draft.serverUrl))
+                          showToast("自定义 WSS 证书已导入");
+                      }).finally(() => setBusy(false));
+                    }}
+                  >
+                    <Upload size={14} /> {certificate ? "替换" : "导入"}
+                  </button>
+                  {certificate && (
+                    <button
+                      type="button"
+                      className="text-button small muted"
+                      disabled={busy}
+                      onClick={() => {
+                        setBusy(true);
+                        void perform(
+                          () => api.removeServerCertificate(draft.serverUrl),
+                          "自定义 WSS 证书已移除",
+                        ).finally(() => setBusy(false));
+                      }}
+                    >
+                      <Trash2 size={13} /> 移除
+                    </button>
+                  )}
+                </span>
+              </div>
+              <p className="certificate-hint">
+                自定义信任只应用于该 IP
+                或主机，客户端仍会校验证书有效期和主机名。
+              </p>
               <div className="form-actions">
                 {active && (
                   <button

@@ -420,11 +420,20 @@ export function SensesPage({ state }: { state: Snapshot }) {
             subtitle="借用 MaiBot 的人格和上下文，自然地开启话题。"
             action={<Clock3 size={18} className="muted" />}
           >
-            <SettingToggle
-              state={state}
-              name="proactiveEnabled"
+            <Toggle
               label="主动陪伴"
-              hint="长时间没有交流时，麦麦会试着找一个话题。"
+              checked={state.settings.proactiveEnabled}
+              disabled={state.connection.transport === "legacy"}
+              hint={
+                state.connection.transport === "legacy"
+                  ? "当前独立适配器使用消息协议，暂不支持主动陪伴任务。"
+                  : "长时间没有交流时，麦麦会试着找一个话题。"
+              }
+              onChange={(value) =>
+                void perform(() =>
+                  api.updateSettings({ proactiveEnabled: value }),
+                )
+              }
             />
             <form
               onSubmit={(event) => {

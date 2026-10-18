@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { importModelFile, safeAssetPath } from "../electron/models";
 
 const folders: string[] = [];
+const coreSource =
+  "var Live2DCubismCore = { Version: { csmGetVersion() { return 0; } } };";
 async function folder() {
   await mkdir(resolve(".cache/tests"), { recursive: true });
   const path = await mkdtemp(resolve(".cache/tests/model-"));
@@ -50,9 +52,9 @@ describe("本地模型导入", () => {
       "texture.png",
       "idle.motion3.json",
       "smile.exp3.json",
-      "core.js",
     ])
       await writeFile(join(source, file), "{}");
+    await writeFile(join(source, "core.js"), coreSource);
     await writeFile(
       join(source, "cat.model3.json"),
       JSON.stringify({
@@ -76,6 +78,39 @@ describe("本地模型导入", () => {
     expect(model.coreUrl).toContain("live2dcubismcore.min.js");
   });
 
+  it("导入其他 Live2D 时复用 Core，原始文件和首个角色删除后仍可使用", async () => {
+    const root = await folder();
+    for (const name of ["first", "second"]) {
+      const source = join(root, "source", name);
+      await mkdir(source);
+      await writeFile(join(source, "model.moc3"), "moc");
+      await writeFile(
+        join(source, `${name}.model3.json`),
+        JSON.stringify({ FileReferences: { Moc: "model.moc3" } }),
+      );
+    }
+    const originalCore = join(root, "source", "core.js");
+    await writeFile(originalCore, coreSource);
+    const modelsRoot = join(root, "models");
+    const first = await importModelFile(
+      join(root, "source", "first", "first.model3.json"),
+      modelsRoot,
+      originalCore,
+    );
+    await rm(originalCore);
+    await rm(join(modelsRoot, first.id), { recursive: true });
+
+    const second = await importModelFile(
+      join(root, "source", "second", "second.model3.json"),
+      modelsRoot,
+    );
+    expect(second.kind).toBe("live2d");
+    expect(second.coreUrl).toContain("live2dcubismcore.min.js");
+    expect(
+      await readFile(join(modelsRoot, second.id, second.coreEntry!), "utf8"),
+    ).toBe(coreSource);
+  });
+
   it("拒绝越界、绝对路径及远程模型引用", async () => {
     const root = await folder();
     for (const path of [
@@ -92,5 +127,14 @@ describe("本地模型导入", () => {
     await expect(
       importModelFile(join(root, "source/bad.json"), join(root, "models")),
     ).rejects.toThrow();
+  });
+
+  it("旧版 Cubism 2 模型会得到明确的兼容性提示", async () => {
+    const root = await folder();
+    const entry = join(root, "source", "legacy.model.json");
+    await writeFile(entry, JSON.stringify({ model: "legacy.moc" }));
+    await expect(importModelFile(entry, join(root, "models"))).rejects.toThrow(
+      "暂不支持 Cubism 2",
+    );
   });
 });

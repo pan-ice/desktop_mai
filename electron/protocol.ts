@@ -62,6 +62,7 @@ export const pluginFrameSchema = z.discriminatedUnion("type", [
       type: z.literal("ready"),
       sessionId: id,
       capabilities: z.array(z.string().max(80)).max(32),
+      transport: z.enum(["gateway", "legacy"]).optional(),
     })
     .strict(),
   z
@@ -136,4 +137,12 @@ export function parseReply(frame: PluginReply): Reply {
 export function adapterConfig(settings: Settings, token: string): string {
   const quote = (value: string) => JSON.stringify(value);
   return `# Mai 桌面伙伴适配器 · 此文件包含独立连接令牌，请妥善保存。\n[plugin]\nenabled = true\nconfig_version = "1.0.0"\n\n[connection]\ndesktop_url = "ws://127.0.0.1:${settings.adapterPort}/maibot"\ntoken = ${quote(token)}\n\n[identity]\nplatform = ${quote(settings.platform)}\naccount_id = ${quote(settings.botId)}\nuser_id = ${quote(settings.userId)}\nscope = ${quote(settings.adapterScope)}\n`;
+}
+
+export function messageAdapterConfig(
+  settings: Settings,
+  token: string,
+): string {
+  const quote = (value: string) => JSON.stringify(value);
+  return `# Mai 桌面伙伴独立适配器；包含桌宠连接令牌，请妥善保存。\n# MaiBot 令牌填写 [maim_message].auth_token 中的原文值，或设置 MAIBOT_TOKEN。\n[maibot]\nurl = "ws://127.0.0.1:8000/ws"\ntoken = ""\n\n[desktop]\nurl = "ws://127.0.0.1:${settings.adapterPort}/maibot"\ntoken = ${quote(token)}\n\n[identity]\nplatform = ${quote(settings.platform)}\naccount_id = ${quote(settings.botId)}\nuser_id = ${quote(settings.userId)}\nuser_name = ${quote(settings.userName)}\nscope = ${quote(settings.adapterScope)}\n`;
 }

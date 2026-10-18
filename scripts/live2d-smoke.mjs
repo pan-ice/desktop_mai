@@ -1,5 +1,12 @@
 import { _electron as electron } from "playwright";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import { dirname, join, resolve, sep } from "node:path";
@@ -7,13 +14,22 @@ import assert from "node:assert/strict";
 
 if (!process.argv[2])
   throw new Error(
-    "用法：npm run test:live2d -- <model3.json> [live2dcubismcore.min.js]。请提供有权使用的模型和官方 Core。",
+    "用法：npm run test:live2d -- <model3.json> [live2dcubismcore.min.js | --download-core]。请提供有权使用的模型。",
   );
 const modelPath = resolve(process.argv[2]);
-const corePath = resolve(
-  process.argv[3] || join(dirname(modelPath), "live2dcubismcore.min.js"),
-);
-await Promise.all([access(modelPath), access(corePath)]);
+const downloadFromOfficial = process.argv.includes("--download-core");
+const coreArgument = process.argv
+  .slice(3)
+  .find((value) => !value.startsWith("--"));
+const corePath = downloadFromOfficial
+  ? undefined
+  : resolve(
+      coreArgument || join(dirname(modelPath), "live2dcubismcore.min.js"),
+    );
+const coreDownloadUrl =
+  "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
+await access(modelPath);
+if (corePath) await access(corePath);
 const base = resolve(".cache/live2d-smoke");
 await mkdir(base, { recursive: true });
 const userData = await mkdtemp(join(base, "userdata-"));
@@ -332,7 +348,7 @@ async function recordHairDemo() {
 let desktop;
 const errors = [];
 const consoleErrors = [];
-const report = { modelPath, corePath, passed: false };
+const report = { modelPath, corePath, downloadFromOfficial, passed: false };
 try {
   const env = { ...process.env, MAI_USER_DATA: userData };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -344,6 +360,9 @@ try {
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",
       "--disable-features=CalculateNativeWinOcclusion",
+      ...(process.env.MAI_TEST_PROXY
+        ? [`--proxy-server=${process.env.MAI_TEST_PROXY}`]
+        : []),
     ],
     cwd: resolve("."),
     env,
@@ -376,21 +395,240 @@ try {
     await target.evaluate(observePixi);
   }
   await page.waitForFunction(() => !!window.mai);
+  await page.evaluate(async () => {
+    window.__coreSmokeState = await window.mai.snapshot();
+    window.mai.subscribe((value) => {
+      window.__coreSmokeState = value;
+    });
+  });
+  assert.equal(
+    (await page.evaluate(() => window.mai.snapshot())).live2dCoreReady,
+    false,
+  );
+  if (corePath)
+    await desktop.evaluate(
+      ({ net }, { url, source }) => {
+        const original = net.fetch.bind(net);
+        net.fetch = (input, options) =>
+          String(input) === url
+            ? Promise.resolve(new Response(source))
+            : original(input, options);
+      },
+      { url: coreDownloadUrl, source: await readFile(corePath, "utf8") },
+    );
   await desktop.evaluate(
     ({ dialog }, paths) => {
       let next = 0;
-      dialog.showOpenDialog = async () => ({
-        canceled: false,
-        filePaths: [paths[next++]],
-      });
+      dialog.showOpenDialog = async () => {
+        const file = paths[next++];
+        if (!file) throw new Error("出现了额外的 Core 选择弹窗");
+        return { canceled: false, filePaths: [file] };
+      };
     },
-    [modelPath, corePath],
+    [modelPath],
   );
   await page.evaluate(() => window.mai.importModel());
-  const state = await page.evaluate(() => window.mai.snapshot());
+  let state = await page.evaluate(() => window.mai.snapshot());
   assert.equal(state.models.length, 1, "模型已导入隔离数据目录");
   assert.equal(state.models[0].kind, "live2d");
+  assert.equal(state.live2dCoreReady, true, "Core 已保存为可复用运行库");
+  assert.ok(
+    state.activity.some((value) => value.text.includes("已从 Live2D 官方下载")),
+    "全新用户只有模型文件也能自动准备运行库",
+  );
+  assert.equal(state.live2dCoreDownloading, false);
+  assert.equal(state.live2dCoreError, "");
   assert.equal(state.settings.activeModelId, state.models[0].id);
+  const firstId = state.models[0].id;
+  const assertRendering = async () => {
+    const expected = state.models.find(
+      (value) => value.id === state.settings.activeModelId,
+    );
+    for (const [name, target] of targets) {
+      try {
+        await target.waitForFunction(
+          (model) => {
+            if (document.querySelector(".avatar-error")) return true;
+            const app = window.__live2dTestApps.findLast(
+              (value) =>
+                value.stage?.children.length && value.view?.isConnected,
+            );
+            return (
+              app?.stage.children[0].internalModel.settings.url ===
+                model.assetUrl &&
+              Array.from(document.scripts).some(
+                (script) => script.src === model.coreUrl,
+              )
+            );
+          },
+          expected,
+          { timeout: 20000 },
+        );
+      } catch (error) {
+        report.renderFailure = {
+          window: name,
+          expected,
+          observed: await target.evaluate(() => ({
+            scripts: Array.from(document.scripts).map((script) => script.src),
+            canvases: document.querySelectorAll("canvas").length,
+            errors: Array.from(document.querySelectorAll(".avatar-error")).map(
+              (value) => value.textContent,
+            ),
+            applications: window.__live2dTestApps.map((value) => ({
+              connected: value.view?.isConnected,
+              children: value.stage?.children.length,
+              url: value.stage?.children[0]?.internalModel?.settings.url,
+            })),
+          })),
+        };
+        await target.screenshot({
+          path: join(base, "runtime-render-failed.png"),
+        });
+        throw error;
+      }
+      assert.equal(
+        await target.locator(".avatar-error").count(),
+        0,
+        `${name}: ${await target.locator(".avatar-error").allTextContents()}`,
+      );
+      const stats = await target.evaluate(modelStats);
+      assert.ok(stats.visiblePixels > 100, `${name} 的模型不是空白画布`);
+    }
+  };
+  await assertRendering();
+  await desktop.evaluate(({ net }, url) => {
+    const original = net.fetch.bind(net);
+    net.fetch = (input, options) => {
+      if (String(input) === url)
+        return Promise.reject(new Error("simulated offline"));
+      return original(input, options);
+    };
+  }, coreDownloadUrl);
+  await desktop.evaluate(({ dialog }, entry) => {
+    let count = 0;
+    dialog.showOpenDialog = async () => {
+      if (count++) throw new Error("第二次导入不应重复要求选择 Core");
+      return { canceled: false, filePaths: [entry] };
+    };
+  }, modelPath);
+  await page.evaluate(() => window.mai.importModel());
+  state = await page.evaluate(() => window.mai.snapshot());
+  assert.equal(state.models.length, 2, "第二个角色已复用运行库完成导入");
+  assert.notEqual(state.settings.activeModelId, firstId);
+  await page.evaluate((id) => window.mai.removeModel(id), firstId);
+  await assertRendering();
+
+  await page.getByRole("button", { name: "角色衣橱", exact: true }).click();
+  await page
+    .getByRole("button", { name: "更新官方运行库", exact: true })
+    .click();
+  await page.waitForFunction(() => window.__coreSmokeState.live2dCoreError);
+  const failedUpdate = await page.evaluate(() => window.mai.snapshot());
+  assert.equal(
+    failedUpdate.live2dCoreReady,
+    true,
+    "更新失败不会破坏可用运行库",
+  );
+  assert.equal(failedUpdate.live2dCoreDownloading, false);
+  await page.screenshot({ path: join(base, "runtime-download-failed.png") });
+
+  const installedCorePath = join(
+    userData,
+    "models",
+    ".live2d-core",
+    "live2dcubismcore.min.js",
+  );
+  const installedCoreSource = await readFile(installedCorePath, "utf8");
+  await desktop.evaluate(
+    ({ net }, { url, source }) => {
+      const original = net.fetch.bind(net);
+      globalThis.__coreRetryRequests = 0;
+      net.fetch = async (input, options) => {
+        if (String(input) !== url) return original(input, options);
+        globalThis.__coreRetryRequests++;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return new Response(source);
+      };
+    },
+    { url: coreDownloadUrl, source: installedCoreSource },
+  );
+  await page.getByRole("button", { name: "重试下载", exact: true }).click();
+  await page.waitForFunction(
+    (previousActivity) => {
+      const state = window.__coreSmokeState;
+      return (
+        !state.live2dCoreDownloading &&
+        !state.live2dCoreError &&
+        state.activity.some(
+          (value) =>
+            value.text.includes("已从 Live2D 官方下载") &&
+            !previousActivity.includes(value.id),
+        )
+      );
+    },
+    failedUpdate.activity.map((value) => value.id),
+  );
+  assert.equal(await desktop.evaluate(() => globalThis.__coreRetryRequests), 1);
+  await page.evaluate(() =>
+    Promise.all([
+      window.mai.downloadLive2DCore(),
+      window.mai.downloadLive2DCore(),
+    ]),
+  );
+  assert.equal(
+    await desktop.evaluate(() => globalThis.__coreRetryRequests),
+    2,
+    "并发下载只发出一次请求",
+  );
+  await page.getByRole("button", { name: "此刻", exact: true }).click();
+
+  const previousCoreUrl = state.models[1].coreUrl;
+  for (const [, target] of targets)
+    await target.evaluate(() => {
+      window.__previousCoreForSmoke = window.Live2DCubismCore;
+    });
+  const replacementCore = join(userData, "replacement-core.js");
+  await writeFile(
+    replacementCore,
+    `${installedCoreSource}\n// Runtime replacement smoke check\n`,
+  );
+  await desktop.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({
+      canceled: false,
+      filePaths: [file],
+    });
+  }, replacementCore);
+  assert.equal(await page.evaluate(() => window.mai.importLive2DCore()), true);
+  state = await page.evaluate(() => window.mai.snapshot());
+  assert.notEqual(state.models[0].coreUrl, previousCoreUrl);
+  await assertRendering();
+  for (const [name, target] of targets)
+    assert.ok(
+      await target.evaluate(
+        () => window.__previousCoreForSmoke !== window.Live2DCubismCore,
+      ),
+      `${name} 已实际加载新的 Core，而不是继续使用旧的全局对象`,
+    );
+  await page.getByRole("button", { name: "角色衣橱", exact: true }).click();
+  assert.equal(
+    await page.getByRole("button", { name: "从本地导入", exact: true }).count(),
+    1,
+  );
+  assert.ok(
+    await page
+      .locator(".live2d-runtime")
+      .getByRole("status")
+      .filter({ hasText: "已就绪" })
+      .isVisible(),
+  );
+  await page.screenshot({ path: join(base, "runtime-settings.png") });
+  await page.getByRole("button", { name: "此刻", exact: true }).click();
+  console.log(
+    "PASS Live2D：无 Core 自动下载、断网复用、失败重试、并发下载合并、双窗口更换运行库并重新加载",
+  );
+  report.runtimeReuse = true;
+  report.automaticDownload = true;
+  report.downloadFailureRecovery = true;
   report.model = state.models[0].entry;
   for (const [name, target] of targets) {
     await target.waitForFunction(

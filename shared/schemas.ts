@@ -24,16 +24,14 @@ export const serverUrlSchema = z
   .refine((value) => {
     const url = new URL(value);
     return (
-      (url.protocol === "wss:" ||
-        (url.protocol === "ws:" &&
-          ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))) &&
+      ["ws:", "wss:"].includes(url.protocol) &&
       url.pathname === "/desktop" &&
       !url.username &&
       !url.password &&
       !url.search &&
       !url.hash
     );
-  }, "请输入 wss://服务器域名/desktop；本机测试可使用 ws://127.0.0.1:端口/desktop");
+  }, "请输入 ws://或 wss://服务器地址/desktop");
 
 export const serverConnectionSchema = z
   .object({
@@ -77,6 +75,7 @@ export const settingsPatchSchema = z
     alwaysOnTop: z.boolean(),
     clickThrough: z.boolean(),
     petVisible: z.boolean(),
+    petPositionLocked: z.boolean(),
     petScale: z.number().min(0.5).max(1.6),
     reducedMotion: z.boolean(),
     autoConnect: z.boolean(),

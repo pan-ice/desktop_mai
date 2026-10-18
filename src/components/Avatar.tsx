@@ -10,7 +10,16 @@ interface Props {
 
 export function Avatar(props: Props) {
   // 加载错误与渲染器都属于当前资源；换角色时一起重建，避免旧错误移除新挂载点。
-  return <AvatarContent key={props.model?.id ?? "placeholder"} {...props} />;
+  return (
+    <AvatarContent
+      key={
+        props.model
+          ? `${props.model.id}:${props.model.coreUrl ?? ""}`
+          : "placeholder"
+      }
+      {...props}
+    />
+  );
 }
 
 function AvatarContent({
@@ -58,7 +67,7 @@ function AvatarContent({
       cancelled = true;
       dispose?.();
     };
-  }, [model?.id, model?.kind, reducedMotion]);
+  }, [model?.id, model?.kind, model?.coreUrl, reducedMotion]);
 
   if (model) {
     if (failure)

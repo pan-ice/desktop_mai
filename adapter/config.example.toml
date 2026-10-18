@@ -1,0 +1,18 @@
+# 桌宠「连接与账号」→「独立适配器接入」可导出包含实际桌宠令牌的配置。
+[maibot]
+url = "ws://127.0.0.1:8000/ws"
+# MaiBot [maim_message].auth_token 中的一个原文值，不加 Bearer。
+# 可用环境变量 MAIBOT_TOKEN 覆盖；与桌宠令牌不同。
+token = ""
+
+[desktop]
+url = "ws://127.0.0.1:18765/maibot"
+# 从桌宠导出的独立令牌，或用 MAI_DESKTOP_TOKEN 环境变量设置。
+token = ""
+
+[identity]
+platform = "desktop_pet"
+account_id = "mai_desktop_pet"
+user_id = "desktop_owner"
+user_name = "你"
+scope = ""

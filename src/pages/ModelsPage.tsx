@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Box,
   Check,
+  Download,
   FileImage,
   FolderInput,
   PawPrint,
@@ -17,10 +18,23 @@ import type { ImportedModel, Snapshot } from "../../shared/types";
 export function ModelsPage({ state }: { state: Snapshot }) {
   const [removing, setRemoving] = useState("");
   const [importing, setImporting] = useState(false);
+  const [settingCore, setSettingCore] = useState(false);
+  const busy = importing || settingCore || state.live2dCoreDownloading;
   const importModel = async () => {
     setImporting(true);
     await perform(() => api.importModel());
     setImporting(false);
+  };
+  const importCore = async () => {
+    setSettingCore(true);
+    await perform(() => api.importLive2DCore());
+    setSettingCore(false);
+  };
+  const downloadCore = async () => {
+    await perform(
+      () => api.downloadLive2DCore(),
+      "官方 Live2D 运行库已就绪，可以导入模型了",
+    );
   };
   return (
     <>
@@ -35,10 +49,14 @@ export function ModelsPage({ state }: { state: Snapshot }) {
           onClick={() => {
             void importModel();
           }}
-          disabled={importing}
+          disabled={busy}
         >
           <Plus size={17} />
-          {importing ? "正在导入…" : "导入角色"}
+          {state.live2dCoreDownloading
+            ? "正在下载运行库…"
+            : importing
+              ? "正在导入…"
+              : "导入角色"}
         </button>
       </div>
       <div className="model-grid">
@@ -131,7 +149,7 @@ export function ModelsPage({ state }: { state: Snapshot }) {
           onClick={() => {
             void importModel();
           }}
-          disabled={importing}
+          disabled={busy}
         >
           <span>
             <FolderInput size={30} strokeWidth={1.3} />
@@ -149,6 +167,54 @@ export function ModelsPage({ state }: { state: Snapshot }) {
         subtitle="不附带第三方角色模型。导入的文件会复制到应用数据目录，原文件可以自由整理。"
         className="import-guide"
       >
+        <div className="live2d-runtime">
+          <div>
+            <h3>Live2D 运行库</h3>
+            <p role="status">
+              {state.live2dCoreDownloading
+                ? "正在从 Live2D 官方下载运行库，请稍候…"
+                : state.live2dCoreReady
+                  ? "已就绪，导入其他 Live2D 模型时会自动复用。"
+                  : "只有模型文件也可以，首次导入时会自动下载官方运行库。"}
+            </p>
+            {state.live2dCoreError && (
+              <p className="live2d-runtime-error" role="alert">
+                {state.live2dCoreError}
+              </p>
+            )}
+            <small>
+              下载一次后可离线使用。已有运行库也可以从本地导入，移除角色不会丢失。
+            </small>
+          </div>
+          <div className="live2d-runtime-actions">
+            <button
+              className="button primary"
+              onClick={() => {
+                void downloadCore();
+              }}
+              disabled={busy}
+            >
+              <Download size={16} />
+              {state.live2dCoreDownloading
+                ? "正在下载…"
+                : state.live2dCoreError
+                  ? "重试下载"
+                  : state.live2dCoreReady
+                    ? "更新官方运行库"
+                    : "下载官方运行库"}
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => {
+                void importCore();
+              }}
+              disabled={busy}
+            >
+              <FolderInput size={16} />
+              {settingCore ? "正在设置…" : "从本地导入"}
+            </button>
+          </div>
+        </div>
         <div className="format-grid">
           <div>
             <FileImage size={20} />
@@ -159,8 +225,9 @@ export function ModelsPage({ state }: { state: Snapshot }) {
             <PawPrint size={20} />
             <h4>Live2D</h4>
             <p>
-              选择 .model3.json，自动导入贴图与动作。需要你提供官方 Cubism
-              Core。
+              选择
+              .model3.json，自动导入贴图与动作，首次自动下载运行库；暂不支持旧版
+              .model.json。
             </p>
           </div>
           <div>

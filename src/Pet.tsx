@@ -4,11 +4,13 @@ import {
   AudioLines,
   Heart,
   LoaderCircle,
+  Lock,
   MessageCircle,
   Mic,
   Moon,
   Settings2,
   Square,
+  Unlock,
   Volume2,
   VolumeX,
   X,
@@ -18,6 +20,7 @@ import { Avatar } from "./components/Avatar";
 import { Toasts } from "./components/ui";
 import { stopSpeech, useRecorder, useSpeechReplies } from "./hooks/useVoice";
 import { useConversation } from "./hooks/useConversation";
+import { PET_CHARACTER, PET_SURFACE } from "../shared/pet-layout";
 
 export function Pet() {
   const state = useSnapshot();
@@ -40,6 +43,12 @@ export function Pet() {
     if (reply) setBubble(true);
   }, [reply?.id]);
   useEffect(() => {
+    if (state.settings.petPositionLocked) {
+      pointer.current = null;
+      api.petDrag("end");
+    }
+  }, [state.settings.petPositionLocked]);
+  useEffect(() => {
     const move = (event: MouseEvent) =>
       api.petInteractive(
         Boolean((event.target as Element)?.closest("[data-pet-interactive]")),
@@ -61,7 +70,7 @@ export function Pet() {
     <div
       className={`pet-surface ${state.settings.reducedMotion ? "reduce-motion" : ""}`}
       // Electron 的同源窗口共享页面缩放；只缩放桌宠容器，避免影响控制面板。
-      style={{ zoom: state.settings.petScale }}
+      style={{ ...PET_SURFACE, zoom: state.settings.petScale }}
     >
       {bubble && (
         <div className="pet-bubble" data-pet-interactive>
@@ -98,6 +107,30 @@ export function Pet() {
           <Settings2 size={15} />
         </button>
         <button
+          title={
+            state.settings.petPositionLocked
+              ? "位置已锁定，点击解锁"
+              : "锁定桌宠位置"
+          }
+          aria-label={
+            state.settings.petPositionLocked ? "解锁桌宠位置" : "锁定桌宠位置"
+          }
+          aria-pressed={state.settings.petPositionLocked}
+          onClick={() => {
+            void perform(() =>
+              api.updateSettings({
+                petPositionLocked: !state.settings.petPositionLocked,
+              }),
+            );
+          }}
+        >
+          {state.settings.petPositionLocked ? (
+            <Lock size={15} />
+          ) : (
+            <Unlock size={15} />
+          )}
+        </button>
+        <button
           title="安静陪伴"
           aria-label="切换专注陪伴"
           onClick={() => {
@@ -117,7 +150,13 @@ export function Pet() {
         </button>
       </div>
       <div
-        className="pet-character"
+        className={`pet-character ${state.settings.petPositionLocked ? "position-locked" : ""}`}
+        style={PET_CHARACTER}
+        title={
+          state.settings.petPositionLocked
+            ? "位置已锁定，可点击锁按钮解锁"
+            : "拖动角色调整位置"
+        }
         data-pet-interactive
         onPointerDown={(event) => {
           if (event.button !== 0) return;
@@ -127,7 +166,7 @@ export function Pet() {
             moved: false,
           };
           event.currentTarget.setPointerCapture(event.pointerId);
-          api.petDrag("start");
+          if (!state.settings.petPositionLocked) api.petDrag("start");
         }}
         onPointerMove={(event) => {
           const value = pointer.current;
@@ -138,7 +177,8 @@ export function Pet() {
             5
           )
             value.moved = true;
-          if (value.moved) api.petDrag("move");
+          if (value.moved && !state.settings.petPositionLocked)
+            api.petDrag("move");
         }}
         onPointerUp={() => {
           const value = pointer.current;

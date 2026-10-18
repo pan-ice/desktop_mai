@@ -79,8 +79,8 @@ async function assertScale({ page, pet }, scale, baseline) {
   );
   await pet.waitForFunction(
     (expected) =>
-      innerWidth === Math.round(340 * expected) &&
-      innerHeight === Math.round(400 * expected),
+      Math.abs(innerWidth - Math.round(340 * expected)) <= 1 &&
+      Math.abs(innerHeight - Math.round(400 * expected)) <= 1,
     scale,
     { timeout: 5000 },
   );
@@ -92,10 +92,9 @@ async function assertScale({ page, pet }, scale, baseline) {
     `${scale * 100}% 角色大小不改变控制面板的实际字号和布局`,
   );
   assert.deepEqual(windows.dashboard, baseline.window);
-  assert.deepEqual(windows.pet.size, [
-    Math.round(340 * scale),
-    Math.round(400 * scale),
-  ]);
+  // 分数 DPI 下系统窗口按物理像素取整，换回逻辑像素最多相差 1px。
+  for (const [index, expected] of [340 * scale, 400 * scale].entries())
+    assert.ok(Math.abs(windows.pet.size[index] - Math.round(expected)) <= 1);
   await settle(pet);
   const dimensions = await pet.evaluate(() => {
     const surface = document
@@ -151,7 +150,12 @@ try {
     renderer = await createServer({
       configFile: resolve("vite.config.ts"),
       cacheDir: join(userData, "node_modules/.vite"),
-      server: { host: "127.0.0.1", port: 5174, strictPort: false },
+      server: {
+        host: "127.0.0.1",
+        port: 5174,
+        strictPort: false,
+        watch: { ignored: ["**/.cache/**"] },
+      },
     });
     await renderer.listen();
     env.ELECTRON_RENDERER_URL = new URL(renderer.resolvedUrls.local[0]).origin;

@@ -31,7 +31,12 @@ const api: DesktopApi = {
   setCredential: (key, value) => invoke("setCredential", key, value),
   connect: () => invoke("connect"),
   exportAdapterConfig: () => invoke("exportAdapterConfig"),
+  exportMessageAdapterConfig: () => invoke("exportMessageAdapterConfig"),
   importServerConnection: () => invoke("importServerConnection"),
+  importServerCertificate: (serverUrl) =>
+    invoke("importServerCertificate", serverUrl),
+  removeServerCertificate: (serverUrl) =>
+    invoke("removeServerCertificate", serverUrl),
   prepareLocalServer: () => invoke("prepareLocalServer"),
   beginQQLogin: (server, device) => invoke("beginQQLogin", server, device),
   pollQQLogin: () => invoke("pollQQLogin"),
@@ -48,6 +53,8 @@ const api: DesktopApi = {
   clearHistory: () => invoke("clearHistory"),
   exportHistory: () => invoke("exportHistory"),
   importModel: () => invoke("importModel"),
+  importLive2DCore: () => invoke("importLive2DCore"),
+  downloadLive2DCore: () => invoke("downloadLive2DCore"),
   removeModel: (id) => invoke("removeModel", id),
   screenSources: () => invoke("screenSources"),
   captureScreen: (id) => invoke("captureScreen", id),

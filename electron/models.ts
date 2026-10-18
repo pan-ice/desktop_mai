@@ -19,6 +19,11 @@ import {
 } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ImportedModel, ModelKind } from "../shared/types";
+import {
+  findLive2DCore,
+  installLive2DCore,
+  LIVE2D_CORE_FILE,
+} from "./live2d-core";
 
 export function safeAssetPath(root: string, requested: string): string {
   if (
@@ -133,11 +138,16 @@ export async function importModelFile(
       }
     };
     collect(config.FileReferences);
+    coreFile ??= (await findLive2DCore(modelsRoot))?.file;
     if (!coreFile)
       throw new Error(
-        "Live2D 需要导入官方 Cubism Core（live2dcubismcore.min.js）",
+        "请先设置一次官方 Cubism Core（live2dcubismcore.min.js），之后导入 Live2D 会自动复用",
       );
-    coreEntry = "live2dcubismcore.min.js";
+    coreEntry = LIVE2D_CORE_FILE;
+  } else if (entry.toLowerCase().endsWith(".model.json")) {
+    throw new Error(
+      "暂不支持 Cubism 2 的 .model.json，请使用 Cubism 3 / 4 / 5 的 .model3.json 模型",
+    );
   } else if (ext === ".json") {
     const config = JSON.parse(await readFile(file, "utf8")) as {
       name?: string;
@@ -181,8 +191,7 @@ export async function importModelFile(
         await copyFile(original, destination);
       }
       if (coreEntry && coreFile) {
-        if ((await lstat(coreFile)).size > 10 * 1024 * 1024)
-          throw new Error("Cubism Core 文件超过限制");
+        await installLive2DCore(modelsRoot, coreFile);
         await copyFile(coreFile, join(target, coreEntry));
       }
       return withModelUrls({

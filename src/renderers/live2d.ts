@@ -11,24 +11,49 @@ declare global {
 }
 let corePromise: Promise<void> | undefined;
 let loadedCoreUrl = "";
+let coreScript: HTMLScriptElement | undefined;
+
+async function waitForCore() {
+  const started = performance.now();
+  while (performance.now() - started < 5000) {
+    try {
+      const core = window.Live2DCubismCore as
+        | {
+            Version?: { csmGetVersion(): number };
+          }
+        | undefined;
+      if (core?.Version && core.Version.csmGetVersion() > 0) return;
+    } catch {
+      // JavaScript 已加载时，Core 内的 WebAssembly 可能仍在初始化。
+    }
+    await new Promise((resolve) => setTimeout(resolve, 16));
+  }
+  throw new Error("Cubism Core 未能初始化，请在角色衣橱中更换官方运行库");
+}
 
 async function ensureCore(url: string) {
-  if (window.Live2DCubismCore) return;
   if (corePromise && loadedCoreUrl === url) return corePromise;
+  if (corePromise) await corePromise.catch(() => {});
+  coreScript?.remove();
+  window.Live2DCubismCore = undefined;
   loadedCoreUrl = url;
+  const script = document.createElement("script");
+  coreScript = script;
   corePromise = new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
     script.src = url;
-    script.onload = () =>
-      window.Live2DCubismCore
-        ? resolve()
-        : reject(new Error("Cubism Core 未能初始化，请导入官方 SDK Core"));
-    script.onerror = () => {
-      corePromise = undefined;
-      script.remove();
-      reject(new Error("无法加载本地 Cubism Core"));
+    script.onload = () => {
+      void waitForCore().then(resolve, reject);
     };
+    script.onerror = () =>
+      reject(
+        new Error("无法加载本地 Cubism Core，请在角色衣橱中重新设置运行库"),
+      );
     document.head.append(script);
+  }).catch((error) => {
+    corePromise = undefined;
+    script.remove();
+    window.Live2DCubismCore = undefined;
+    throw error;
   });
   return corePromise;
 }
@@ -39,7 +64,7 @@ export async function mount(
   mood: () => Mood,
   reduced: boolean,
 ): Promise<() => void> {
-  if (!model.coreUrl) throw new Error("请重新导入模型并选择 Cubism Core");
+  if (!model.coreUrl) throw new Error("请在角色衣橱中设置一次 Live2D 运行库");
   await ensureCore(model.coreUrl);
   window.PIXI = PIXI;
   const { Live2DModel } = await import("pixi-live2d-display/cubism4");
@@ -69,7 +94,9 @@ export async function mount(
     });
   } catch (error) {
     app.destroy(true);
-    throw error;
+    throw new Error(
+      `Live2D 加载失败，请确认模型资源完整，并在角色衣橱中设置支持该模型版本的运行库：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   app.stage.addChild(avatar);
   host.replaceChildren(app.view as HTMLCanvasElement);

@@ -24,7 +24,11 @@ import { z } from "zod";
 import { DeliveryUnknownError, MaiBotBridge } from "./bridge";
 import { AccountClient, type LoginProof } from "./accounts";
 import { LocalServer } from "./local-server";
-import { adapterConfig } from "./protocol";
+import {
+  ServerCertificateStore,
+  type CertificateAuthorityProvider,
+} from "./server-certificates";
+import { adapterConfig, messageAdapterConfig } from "./protocol";
 import { StateStore } from "./store";
 import {
   inlineAttachment,
@@ -34,12 +38,26 @@ import {
   saveAttachment,
 } from "./media";
 import { containedFile, importModelFile, withModelUrls } from "./models";
+import {
+  findLive2DCore,
+  downloadLive2DCore,
+  installLive2DCore,
+  LIVE2D_CORE_FILE,
+  live2dCoreUrl,
+  type Live2DCore,
+} from "./live2d-core";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
+import {
+  fitPetPosition,
+  PET_CHARACTER,
+  PET_SURFACE,
+} from "../shared/pet-layout";
 import {
   sendSchema,
   isLocalServerUrl,
   serverConnectionSchema,
+  serverUrlSchema,
   settingsPatchSchema,
 } from "../shared/schemas";
 import type {
@@ -82,12 +100,18 @@ protocol.registerSchemesAsPrivileged([
 ]);
 if (!app.requestSingleInstanceLock()) app.quit();
 
-const bridge = new MaiBotBridge();
-const accountClient = new AccountClient();
+let serverCertificates: ServerCertificateStore | undefined;
+const certificateAuthority: CertificateAuthorityProvider = (url) =>
+  serverCertificates?.authority(url);
+const bridge = new MaiBotBridge(certificateAuthority);
+const accountClient = new AccountClient(certificateAuthority);
 const localServer = new LocalServer(process.env.MAI_PYTHON);
 let qqLogin: { server: string; proof: LoginProof } | null = null;
 let historyEpoch = 0;
 let store: StateStore;
+let live2dCore: Live2DCore | undefined;
+let live2dCoreDownload: Promise<Live2DCore> | undefined;
+let live2dCoreError = "";
 let dashboard: BrowserWindow | null = null;
 let pet: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -169,9 +193,18 @@ async function observeScreen(now: number) {
 function snapshot(): Snapshot {
   return structuredClone({
     ...store.state,
+    live2dCoreReady: Boolean(live2dCore),
+    live2dCoreDownloading: Boolean(live2dCoreDownload),
+    live2dCoreError,
+    models: store.state.models.map((model) =>
+      model.kind === "live2d" && live2dCore
+        ? { ...model, coreUrl: live2dCoreUrl(live2dCore) }
+        : model,
+    ),
     removedServerAccounts: store.removedAccounts(
       store.state.settings.serverUrl,
     ),
+    serverCertificates: serverCertificates?.list() ?? [],
   });
 }
 function broadcast() {
@@ -179,6 +212,29 @@ function broadcast() {
   for (const window of [dashboard, pet])
     if (window && !window.isDestroyed())
       window.webContents.send("mai:state", state);
+}
+
+function downloadCore(): Promise<Live2DCore> {
+  if (live2dCoreDownload) return live2dCoreDownload;
+  live2dCoreError = "";
+  live2dCoreDownload = (async () => {
+    try {
+      live2dCore = await downloadLive2DCore(
+        join(store.directory, "models"),
+        (url, options) => net.fetch(url, options),
+      );
+      activity("已从 Live2D 官方下载运行库，之后可离线复用");
+      return live2dCore;
+    } catch (error) {
+      live2dCoreError = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      live2dCoreDownload = undefined;
+      broadcast();
+    }
+  })();
+  broadcast();
+  return live2dCoreDownload;
 }
 function activity(text: string, level: "info" | "error" = "info") {
   store.state.activity = [
@@ -250,23 +306,34 @@ function createDashboard() {
   loadWindow(dashboard, "dashboard");
 }
 
-function fitPet(x: number, y: number) {
+function fitPet(x: number, y: number, cursor?: Electron.Point) {
   if (!pet) return;
-  const { width, height } = pet.getBounds();
-  const area = screen.getDisplayNearestPoint({ x, y }).workArea;
-  pet.setPosition(
-    Math.round(Math.max(area.x, Math.min(x, area.x + area.width - width))),
-    Math.round(Math.max(area.y, Math.min(y, area.y + area.height - height))),
-  );
+  const scale = store.state.settings.petScale;
+  const area = screen.getDisplayNearestPoint(
+    cursor ?? {
+      x: Math.round(x + (PET_CHARACTER.left + PET_CHARACTER.width / 2) * scale),
+      y: Math.round(y + (PET_CHARACTER.top + PET_CHARACTER.height / 2) * scale),
+    },
+  ).workArea;
+  const position = fitPetPosition({ x, y }, area, scale);
+  // setPosition 会反复读取并换算旧尺寸，在 Windows 分数 DPI 下累积取整误差。
+  pet.setBounds({
+    ...position,
+    width: Math.round(PET_SURFACE.width * scale),
+    height: Math.round(PET_SURFACE.height * scale),
+  });
 }
 
 function createPet() {
   const area = screen.getPrimaryDisplay().workArea;
+  const scale = store.state.settings.petScale;
+  // 启动时的原生 move 事件可能先写回默认位置，提前保留用户上次的位置。
+  const savedPosition = store.petPosition;
   pet = new BrowserWindow({
-    width: 340,
-    height: 400,
-    x: area.x + area.width - 360,
-    y: area.y + area.height - 410,
+    width: PET_SURFACE.width,
+    height: PET_SURFACE.height,
+    x: Math.round(area.x + area.width - PET_SURFACE.width * scale - 20),
+    y: Math.round(area.y + area.height - PET_SURFACE.height * scale - 10),
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
@@ -286,7 +353,7 @@ function createPet() {
   });
   pet.once("ready-to-show", () => {
     applyPetSettings();
-    if (store.petPosition) fitPet(store.petPosition.x, store.petPosition.y);
+    if (savedPosition) fitPet(savedPosition.x, savedPosition.y);
   });
   pet.on("close", (event) => {
     if (!quitting) {
@@ -308,10 +375,6 @@ function applyPetSettings() {
   const previous = pet.getBounds();
   // Windows 会把不可拉伸窗口的当前尺寸作为最小值，缩小前清除旧约束。
   pet.setMinimumSize(0, 0);
-  pet.setSize(
-    Math.round(340 * settings.petScale),
-    Math.round(400 * settings.petScale),
-  );
   fitPet(previous.x, previous.y);
   pet.setAlwaysOnTop(settings.alwaysOnTop, "floating");
   pet.setIgnoreMouseEvents(settings.clickThrough, { forward: true });
@@ -350,6 +413,7 @@ async function updateSettings(patch: Partial<Settings>) {
     activity("连接配置已更新，请重新连接 MaiBot");
   }
   store.state.settings = { ...previous, ...parsed };
+  if (parsed.petPositionLocked === true) drag = null;
   if (connectionChanged)
     await localServer.stopUnless(
       store.state.settings.connectionMode === "server"
@@ -373,6 +437,7 @@ async function updateSettings(patch: Partial<Settings>) {
   if (parsed.petVisible === false) store.state.conversationActive = false;
   await store.save();
   applyPetSettings();
+  if ("petPositionLocked" in parsed) updateTrayMenu();
   if (app.isPackaged && "launchAtLogin" in parsed)
     app.setLoginItemSettings({
       openAtLogin: store.state.settings.launchAtLogin,
@@ -449,6 +514,12 @@ function createTray() {
       : icon,
   );
   tray.setToolTip("Mai · 桌面伙伴");
+  updateTrayMenu();
+  tray.on("double-click", () => dashboard?.show());
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "打开陪伴空间", click: () => dashboard?.show() },
@@ -459,8 +530,20 @@ function createTray() {
           pet?.show();
           if (pet) {
             const a = screen.getPrimaryDisplay().workArea;
-            fitPet(a.x + a.width - 360, a.y + a.height - 410);
+            const scale = store.state.settings.petScale;
+            fitPet(
+              a.x + a.width - PET_SURFACE.width * scale - 20,
+              a.y + a.height - PET_SURFACE.height * scale - 10,
+            );
           }
+        },
+      },
+      {
+        label: "锁定桌宠位置",
+        type: "checkbox",
+        checked: store.state.settings.petPositionLocked,
+        click: (item) => {
+          void updateSettings({ petPositionLocked: item.checked });
         },
       },
       {
@@ -475,7 +558,6 @@ function createTray() {
       { label: "退出 Mai", click: () => app.quit() },
     ]),
   );
-  tray.on("double-click", () => dashboard?.show());
 }
 
 async function ensureAdapterToken() {
@@ -828,22 +910,38 @@ async function commands(
     }
     case "loadEarlierHistory":
       return syncCloudHistory(true);
+    case "exportMessageAdapterConfig":
     case "exportAdapterConfig": {
+      const standalone = command === "exportMessageAdapterConfig";
       if (store.state.settings.connectionMode === "server")
         throw new Error("服务器插件由管理员配置；请导入个人服务器凭证后连接");
       await ensureAdapterToken();
       const result = await dialog.showSaveDialog(dashboard!, {
-        title: "导出桌宠适配器配置（包含独立连接令牌）",
+        title: standalone
+          ? "导出独立适配器配置（包含桌宠连接令牌）"
+          : "导出桌宠适配器配置（包含独立连接令牌）",
         defaultPath: "config.toml",
-        filters: [{ name: "插件配置", extensions: ["toml"] }],
+        filters: [
+          {
+            name: standalone ? "独立适配器配置" : "插件配置",
+            extensions: ["toml"],
+          },
+        ],
       });
       if (result.canceled || !result.filePath) return false;
       await writeFile(
         result.filePath,
-        adapterConfig(store.state.settings, credential("adapterToken")),
+        (standalone ? messageAdapterConfig : adapterConfig)(
+          store.state.settings,
+          credential("adapterToken"),
+        ),
         "utf8",
       );
-      activity("适配器配置已导出，请放入插件目录并妥善保存连接令牌");
+      activity(
+        standalone
+          ? "独立适配器配置已导出，请填写 MaiBot 消息服务地址与令牌，再启动适配器"
+          : "适配器配置已导出，请放入插件目录并妥善保存连接令牌",
+      );
       return true;
     }
     case "importServerConnection": {
@@ -888,6 +986,40 @@ async function commands(
       broadcast();
       activity("服务器凭证已导入，点击连接服务器即可接入");
       return true;
+    }
+    case "importServerCertificate": {
+      const serverUrl = serverUrlSchema.parse(args[0]);
+      if (new URL(serverUrl).protocol !== "wss:")
+        throw new Error("自定义证书仅用于 wss:// 服务器地址");
+      const result = await dialog.showOpenDialog(dashboard!, {
+        title: "导入 WSS 服务器的 CA 或自签名证书",
+        properties: ["openFile"],
+        filters: [
+          { name: "X.509 证书", extensions: ["pem", "crt", "cer", "der"] },
+        ],
+      });
+      if (result.canceled || !result.filePaths[0]) return false;
+      const certificate = await serverCertificates!.importFile(
+        serverUrl,
+        result.filePaths[0],
+      );
+      accountClient.close();
+      await bridge.disconnect();
+      broadcast();
+      activity(
+        `已为 ${certificate.host} 导入 ${certificate.certificateCount} 张证书，后续仍会校验证书有效期和服务器主机名`,
+      );
+      return true;
+    }
+    case "removeServerCertificate": {
+      const serverUrl = serverUrlSchema.parse(args[0]);
+      if (await serverCertificates!.remove(serverUrl)) {
+        accountClient.close();
+        await bridge.disconnect();
+        broadcast();
+        activity(`已移除 ${new URL(serverUrl).hostname} 的自定义 WSS 证书`);
+      }
+      return;
     }
     case "disconnect":
       return bridge.disconnect();
@@ -936,6 +1068,25 @@ async function commands(
       );
       return true;
     }
+    case "downloadLive2DCore": {
+      await downloadCore();
+      return;
+    }
+    case "importLive2DCore": {
+      const selected = await dialog.showOpenDialog({
+        title: "设置 Live2D 运行库（只需一次，可供其他模型复用）",
+        properties: ["openFile"],
+        filters: [{ name: "Cubism Core", extensions: ["js"] }],
+      });
+      if (selected.canceled) return false;
+      live2dCore = await installLive2DCore(
+        join(store.directory, "models"),
+        selected.filePaths[0],
+      );
+      live2dCoreError = "";
+      activity("Live2D 运行库已保存，导入其他模型时会自动复用");
+      return true;
+    }
     case "importModel": {
       const selected = await dialog.showOpenDialog({
         title: "导入角色模型或图片",
@@ -960,27 +1111,26 @@ async function commands(
       });
       if (selected.canceled) return;
       const file = selected.filePaths[0];
+      const modelsRoot = join(store.directory, "models");
       let coreFile: string | undefined;
       if (file.toLowerCase().endsWith(".model3.json")) {
-        const candidate = join(dirname(file), "live2dcubismcore.min.js");
-        try {
-          await access(candidate);
-          coreFile = candidate;
-        } catch {
-          const result = await dialog.showOpenDialog({
-            title: "请选择官方 Cubism Core（不随应用分发）",
-            properties: ["openFile"],
-            filters: [{ name: "Cubism Core", extensions: ["js"] }],
-          });
-          if (result.canceled) return;
-          coreFile = result.filePaths[0];
+        coreFile = (await findLive2DCore(modelsRoot))?.file;
+        if (!coreFile) {
+          const candidate = join(dirname(file), LIVE2D_CORE_FILE);
+          try {
+            await access(candidate);
+            coreFile = candidate;
+          } catch {
+            // 首次设置时，也可以选择保存在其他目录的官方 Core。
+          }
+        }
+        if (!coreFile) {
+          coreFile = (await downloadCore()).file;
         }
       }
-      const model = await importModelFile(
-        file,
-        join(store.directory, "models"),
-        coreFile,
-      );
+      const model = await importModelFile(file, modelsRoot, coreFile);
+      if (model.kind === "live2d")
+        live2dCore = await findLive2DCore(modelsRoot);
       store.state.models.push(model);
       await updateSettings({ activeModelId: model.id });
       activity(`已导入角色：${model.name}`);
@@ -1140,13 +1290,30 @@ void app
   .then(async () => {
     store = new StateStore(app.getPath("userData"));
     await store.load();
+    serverCertificates = new ServerCertificateStore(store.directory);
+    try {
+      await serverCertificates.load();
+    } catch (error) {
+      // 可选证书存储损坏时保持 TLS 默认拒绝，不让它阻止用户启动后重新导入。
+      activity(error instanceof Error ? error.message : String(error), "error");
+    }
     await pruneMedia(store.directory, store.allHistory());
+    live2dCore = await findLive2DCore(join(store.directory, "models"));
     store.state.models = store.state.models.map(withModelUrls);
     if (!store.state.settings.corePath && !app.isPackaged)
       store.state.settings.corePath = join(root, "MaiBot");
     protocol.handle("mai-asset", async (request) => {
       try {
         const url = new URL(request.url);
+        if (url.hostname === "runtime") {
+          if (
+            !live2dCore ||
+            url.pathname !== `/${LIVE2D_CORE_FILE}` ||
+            url.searchParams.get("v") !== live2dCore.revision
+          )
+            return new Response("Not found", { status: 404 });
+          return net.fetch(pathToFileURL(live2dCore.file).toString());
+        }
         const [id, ...parts] = url.pathname
           .slice(1)
           .split("/")
@@ -1216,6 +1383,10 @@ void app
     );
     ipcMain.on("mai:drag", (event, action: unknown) => {
       if (event.sender.id !== pet?.webContents.id || !pet) return;
+      if (store.state.settings.petPositionLocked) {
+        drag = null;
+        return;
+      }
       if (action === "start")
         drag = {
           cursor: screen.getCursorScreenPoint(),
@@ -1226,6 +1397,7 @@ void app
         fitPet(
           drag.bounds.x + point.x - drag.cursor.x,
           drag.bounds.y + point.y - drag.cursor.y,
+          point,
         );
       } else if (action === "end") {
         drag = null;
@@ -1255,7 +1427,9 @@ void app
       }
       store.state.connection = status;
       store.state.historySync = {
-        enabled: Boolean(store.state.settings.serverAccountId),
+        enabled:
+          store.state.settings.connectionMode === "server" &&
+          Boolean(store.state.settings.serverAccountId),
         loading: false,
         before: null,
         hasMore: false,
@@ -1383,7 +1557,7 @@ void app
           store.state.settings,
           now,
           lastInteraction,
-          bridge.phase === "connected",
+          bridge.supports("proactive"),
           store.state.focusUntil,
         )
       ) {

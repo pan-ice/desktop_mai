@@ -5,6 +5,10 @@ import WebSocket, { WebSocketServer } from "ws";
 import type { ConnectionPhase, Settings } from "../shared/types";
 import { serverUrlSchema } from "../shared/schemas";
 import {
+  isCertificateValidationError,
+  type CertificateAuthorityProvider,
+} from "./server-certificates";
+import {
   buildRequest,
   identity,
   MAX_FRAME,
@@ -23,6 +27,8 @@ interface Peer {
   userId?: string;
   generation: number;
   alive: boolean;
+  capabilities: string[];
+  transport: "gateway" | "legacy";
 }
 interface Pending {
   resolve(): void;
@@ -32,7 +38,7 @@ interface Pending {
 
 export class DeliveryUnknownError extends Error {}
 
-/** 本机插件入口。只有认证、能力和真实会话确认后才允许请求。 */
+/** 本机适配器入口。认证、能力及通道握手完成后才允许请求。 */
 export class MaiBotBridge extends EventEmitter {
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -52,6 +58,13 @@ export class MaiBotBridge extends EventEmitter {
   private remoteAttempts = 0;
   phase: ConnectionPhase = "disconnected";
 
+  constructor(
+    private readonly certificateAuthority: CertificateAuthorityProvider = () =>
+      undefined,
+  ) {
+    super();
+  }
+
   private status(phase: ConnectionPhase, detail: string) {
     this.phase = phase;
     this.emit("status", {
@@ -63,9 +76,18 @@ export class MaiBotBridge extends EventEmitter {
             sessionId: this.active.sessionId,
             protocol: 1,
             userId: this.active.userId,
+            capabilities: this.active.capabilities,
+            transport: this.active.transport,
           }
         : {}),
     });
+  }
+
+  supports(capability: string): boolean {
+    return (
+      this.phase === "connected" &&
+      Boolean(this.active?.capabilities.includes(capability))
+    );
   }
 
   connect(settings: Settings, token: string): Promise<void> {
@@ -84,7 +106,7 @@ export class MaiBotBridge extends EventEmitter {
           this.openRemote(url, token, generation);
           return;
         }
-        this.status("connecting", "正在开启本机插件接入…");
+        this.status("connecting", "正在开启本机适配器接入…");
         const server = createServer((_request, response) => {
           response.writeHead(404).end();
         });
@@ -155,7 +177,7 @@ export class MaiBotBridge extends EventEmitter {
         }, 20000);
         this.status(
           "connecting",
-          `接入已开启（127.0.0.1:${settings.adapterPort}），等待 MaiBot 插件`,
+          `接入已开启（127.0.0.1:${settings.adapterPort}），等待 MaiBot 适配器`,
         );
       });
     this.tail = task;
@@ -168,7 +190,9 @@ export class MaiBotBridge extends EventEmitter {
       this.remoteAttempts ? "reconnecting" : "connecting",
       "正在连接 MaiBot 服务器…",
     );
-    const socket = new WebSocket(url, {
+    const parsedUrl = new URL(url);
+    const ca = this.certificateAuthority(parsedUrl);
+    const socket = new WebSocket(parsedUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
         ...(this.settings?.serverAccountId
@@ -179,6 +203,7 @@ export class MaiBotBridge extends EventEmitter {
       maxPayload: MAX_FRAME,
       perMessageDeflate: false,
       followRedirects: false,
+      ...(ca?.length ? { ca, rejectUnauthorized: true } : {}),
     });
     this.remoteSocket = socket;
     socket.on("unexpected-response", (_request, response) => {
@@ -208,6 +233,8 @@ export class MaiBotBridge extends EventEmitter {
       sessionId: "",
       alive: true,
       generation,
+      capabilities: [],
+      transport: "gateway",
     };
     this.peers.add(peer);
     peer.timer = setTimeout(
@@ -217,7 +244,15 @@ export class MaiBotBridge extends EventEmitter {
     socket.on("pong", () => {
       peer.alive = true;
     });
-    socket.on("error", () => {});
+    socket.on("error", (error) => {
+      if (remote && isCertificateValidationError(error)) {
+        this.remoteFatalGeneration = generation;
+        this.status(
+          "error",
+          "WSS 证书验证失败，请在连接与账号中导入该服务器的 CA 或自签名证书",
+        );
+      }
+    });
     socket.on("message", (raw) => {
       if (generation !== this.generation || !this.settings) return;
       try {
@@ -254,17 +289,20 @@ export class MaiBotBridge extends EventEmitter {
         if (!peer.sessionId) {
           if (
             frame.type !== "ready" ||
-            REQUIRED_CAPABILITIES.some(
-              (capability) => !frame.capabilities.includes(capability),
-            )
+            (frame.transport === "legacy"
+              ? ["chat", "image", "audio"]
+              : REQUIRED_CAPABILITIES
+            ).some((capability) => !frame.capabilities.includes(capability))
           )
-            throw new Error("插件未提供所需能力或真实会话");
+            throw new Error("适配器未提供所需能力或有效通道");
           if (this.active && peer.startedAt <= this.active.startedAt)
             throw new Error("插件实例已过期");
           if (peer.timer) clearTimeout(peer.timer);
           peer.timer = null;
           const old = this.active;
           peer.sessionId = frame.sessionId;
+          peer.capabilities = frame.capabilities;
+          peer.transport = frame.transport ?? "gateway";
           this.active = peer;
           this.remoteAttempts = 0;
           this.rejectPending("插件实例已切换，之前请求的内核接收状态未确认");
@@ -275,7 +313,9 @@ export class MaiBotBridge extends EventEmitter {
               ? this.settings.serverAccountId
                 ? "服务器已连接 · 桌宠账号已确认"
                 : `服务器已连接 · 用户 ${peer.userId} · 会话已确认`
-              : "MaiBot 插件已连接 · 协议 v1 · 会话已确认",
+              : peer.transport === "legacy"
+                ? "MaiBot 消息服务已连接"
+                : "MaiBot 插件已连接 · 协议 v1 · 会话已确认",
           );
           return;
         }
@@ -346,7 +386,7 @@ export class MaiBotBridge extends EventEmitter {
       this.active = null;
       this.rejectPending("插件连接中断，内核是否接收未确认，请先检查记录");
       if (generation === this.generation)
-        this.status("reconnecting", "MaiBot 插件已断开，等待插件自动重连…");
+        this.status("reconnecting", "MaiBot 适配器已断开，等待适配器自动重连…");
     });
   }
 
@@ -403,6 +443,8 @@ export class MaiBotBridge extends EventEmitter {
     return this.request("chat", text, image, id, source);
   }
   proactive(intent: string, id: string = randomUUID()): Promise<void> {
+    if (!this.supports("proactive"))
+      return Promise.reject(new Error("当前适配器不支持主动陪伴任务"));
     return this.request("proactive", intent, undefined, id);
   }
 

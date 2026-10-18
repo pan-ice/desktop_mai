@@ -26,6 +26,7 @@ export interface Settings {
   alwaysOnTop: boolean;
   clickThrough: boolean;
   petVisible: boolean;
+  petPositionLocked: boolean;
   petScale: number;
   reducedMotion: boolean;
   autoConnect: boolean;
@@ -91,6 +92,17 @@ export interface Activity {
   timestamp: number;
 }
 
+export interface ServerCertificateInfo {
+  host: string;
+  subject: string;
+  issuer: string;
+  fingerprint256: string;
+  validFrom: number;
+  validTo: number;
+  certificateCount: number;
+  importedAt: number;
+}
+
 export interface Snapshot {
   settings: Settings;
   credentials: Record<CredentialKey, boolean>;
@@ -101,6 +113,8 @@ export interface Snapshot {
     sessionId?: string;
     protocol?: number;
     userId?: string;
+    capabilities?: string[];
+    transport?: "gateway" | "legacy";
   };
   history: ChatMessage[];
   historySync: {
@@ -110,7 +124,11 @@ export interface Snapshot {
     before: number | null;
   };
   removedServerAccounts: string[];
+  serverCertificates: ServerCertificateInfo[];
   models: ImportedModel[];
+  live2dCoreReady: boolean;
+  live2dCoreDownloading: boolean;
+  live2dCoreError: string;
   activity: Activity[];
   mood: Mood;
   focusUntil: number | null;
@@ -140,7 +158,10 @@ export interface DesktopApi {
   setCredential(key: CredentialKey, value: string): Promise<void>;
   connect(): Promise<void>;
   exportAdapterConfig(): Promise<boolean>;
+  exportMessageAdapterConfig(): Promise<boolean>;
   importServerConnection(): Promise<boolean>;
+  importServerCertificate(serverUrl: string): Promise<boolean>;
+  removeServerCertificate(serverUrl: string): Promise<void>;
   prepareLocalServer(): Promise<string | null>;
   beginQQLogin(
     serverUrl: string,
@@ -160,6 +181,8 @@ export interface DesktopApi {
   clearHistory(): Promise<void>;
   exportHistory(): Promise<boolean>;
   importModel(): Promise<void>;
+  importLive2DCore(): Promise<boolean>;
+  downloadLive2DCore(): Promise<void>;
   removeModel(id: string): Promise<void>;
   screenSources(): Promise<ScreenSource[]>;
   captureScreen(sourceId: string): Promise<string>;

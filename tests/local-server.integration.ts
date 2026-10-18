@@ -136,9 +136,13 @@ it("空目录自动初始化、启动账号服务，QQ 登录与账号在重启�
 
 it("托管控制管道关闭后中继自动退出；远程地址不会触发本机初始化", async () => {
   const { url, config } = await fixture();
-  await expect(
-    local.ensure(directory, "wss://remote.example.com/desktop"),
-  ).rejects.toThrow("自动初始化仅用于本机");
+  for (const remote of [
+    "ws://remote.example.com/desktop",
+    "wss://remote.example.com/desktop",
+  ])
+    await expect(local.ensure(directory, remote)).rejects.toThrow(
+      "自动初始化仅用于本机",
+    );
   await local.ensure(directory, url);
   await local.stop();
   host = spawn(

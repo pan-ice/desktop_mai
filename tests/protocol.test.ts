@@ -63,14 +63,17 @@ describe("桌宠协议 v1", () => {
 });
 
 describe("服务器接入凭证", () => {
-  it("允许加密服务器和本机测试，拒绝携带凭证、查询参数或明文公网地址", () => {
+  it("允许外部 ws、加密服务器和本机测试，拒绝错误协议、凭证及查询参数", () => {
     for (const url of [
       "wss://mai.example.com/desktop",
+      "ws://mai.example.com/desktop",
+      "ws://192.168.1.10:18766/desktop",
       "ws://127.0.0.1:18766/desktop",
     ])
       expect(serverUrlSchema.safeParse(url).success).toBe(true);
     for (const url of [
-      "ws://example.com/desktop",
+      "http://example.com/desktop",
+      "ws://user:secret@example.com/desktop",
       "wss://user:secret@example.com/desktop",
       "wss://example.com/desktop?token=secret",
       "wss://example.com/adapter",
