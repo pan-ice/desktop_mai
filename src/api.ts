@@ -79,6 +79,8 @@ function previewApi(): DesktopApi {
     captureScreen: unsupported,
     transcribe: unsupported,
     synthesize: unsupported,
+    cloneVoice: unsupported,
+    queryVoice: unsupported,
     voiceConversation: unsupported,
     setMood: async (mood) => {
       local.mood = mood;

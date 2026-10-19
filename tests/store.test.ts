@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { defaultSettings } from "../shared/defaults";
 import { StateStore } from "../electron/store";
+import { ttsProfile, ttsProviders } from "../shared/tts";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -11,6 +12,84 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 describe("持久化版本迁移", () => {
+  it("旧版语音配置继续使用原服务、模型与音色", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "speech-legacy-"));
+    directories.push(directory);
+    await writeFile(
+      join(directory, "state.json"),
+      JSON.stringify({
+        version: 2,
+        settings: {
+          ttsEngine: "api",
+          speechBaseUrl: "http://localhost:9000/v1",
+          ttsModel: "existing-model",
+          ttsVoice: "existing-voice",
+        },
+        history: [],
+        models: [],
+        encrypted: { speechKey: "existing-ciphertext" },
+      }),
+    );
+    const store = new StateStore(directory);
+    await store.load();
+    expect(ttsProfile(store.state.settings)).toMatchObject({
+      baseUrl: "http://localhost:9000/v1",
+      model: "existing-model",
+      voice: "existing-voice",
+    });
+    expect(store.state.clonedVoices).toEqual([]);
+    expect(store.state.credentials.speechKey).toBe(true);
+    expect(store.state.credentials.ttsSiliconflowKey).toBe(false);
+  });
+  it("五家合成配置、复刻音色与密文独立保存并重启恢复", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "speech-providers-"));
+    directories.push(directory);
+    const store = new StateStore(directory);
+    store.state.settings.ttsProvider = "bailian";
+    for (const provider of [
+      "siliconflow",
+      "bailian",
+      "minimax",
+      "volcengine",
+      "mimo",
+    ] as const) {
+      const spec = ttsProviders[provider];
+      store.state.settings.ttsProfiles[provider] = {
+        ...spec.defaults,
+        voice: `custom-${provider}`,
+      };
+      store.encrypted[spec.key] = `ciphertext-${provider}`;
+    }
+    expect(defaultSettings.ttsProfiles).toEqual({});
+    expect(new StateStore(directory).state.settings.ttsProfiles).toEqual({});
+    store.state.clonedVoices.push({
+      id: "fa105858-b614-467d-917c-ebcb1236b6bf",
+      name: "麦麦",
+      provider: "bailian",
+      voiceId: "custom-bailian",
+      profile: store.state.settings.ttsProfiles.bailian!,
+      status: "pending",
+      createdAt: 1,
+    });
+    await store.save();
+    const restored = new StateStore(directory);
+    await restored.load();
+    expect(restored.state.settings).toEqual(store.state.settings);
+    expect(restored.state.clonedVoices).toEqual(store.state.clonedVoices);
+    expect(restored.encrypted).toEqual(store.encrypted);
+    for (const provider of [
+      "siliconflow",
+      "bailian",
+      "minimax",
+      "volcengine",
+      "mimo",
+    ] as const)
+      expect(restored.state.credentials[ttsProviders[provider].key]).toBe(true);
+  });
   it("从本机移除桌宠后重启仍保留偏好和聊天记录，其他服务器与设备不受影响", async () => {
     const base = resolve(".cache/tests");
     await mkdir(base, { recursive: true });

@@ -3,12 +3,30 @@ import type {
   PetAccount,
   QQLoginChallenge,
 } from "./accounts";
+import type { MessagePart } from "./message-content";
+import type {
+  ClonedVoice,
+  TtsProfile,
+  TtsProvider,
+  VoiceCloneInput,
+} from "./tts";
 
 export type ConnectionPhase =
   "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
 export type Mood = "idle" | "happy" | "thinking" | "speaking" | "sleeping";
 export type ModelKind = "image" | "pngtuber" | "live2d" | "vrm" | "mmd";
-export type CredentialKey = "adapterToken" | "serverToken" | "speechKey";
+export const CREDENTIAL_KEYS = [
+  "adapterToken",
+  "serverToken",
+  "speechKey",
+  "ttsOpenaiKey",
+  "ttsSiliconflowKey",
+  "ttsBailianKey",
+  "ttsMinimaxKey",
+  "ttsVolcengineKey",
+  "ttsMimoKey",
+] as const;
+export type CredentialKey = (typeof CREDENTIAL_KEYS)[number];
 export type Page = "home" | "chat" | "models" | "senses" | "core" | "settings";
 
 export interface Settings {
@@ -33,6 +51,8 @@ export interface Settings {
   launchAtLogin: boolean;
   voiceEnabled: boolean;
   ttsEngine: "system" | "api";
+  ttsProvider: TtsProvider;
+  ttsProfiles: Partial<Record<TtsProvider, TtsProfile>>;
   systemVoice: string;
   speechBaseUrl: string;
   sttModel: string;
@@ -82,6 +102,7 @@ export interface ChatMessage {
   timestamp: number;
   source: "text" | "voice" | "screen" | "proactive" | "core";
   attachments?: Attachment[];
+  parts?: MessagePart[];
   delivery?: "sent" | "failed" | "unknown";
 }
 
@@ -126,6 +147,7 @@ export interface Snapshot {
   removedServerAccounts: string[];
   serverCertificates: ServerCertificateInfo[];
   models: ImportedModel[];
+  clonedVoices: ClonedVoice[];
   live2dCoreReady: boolean;
   live2dCoreDownloading: boolean;
   live2dCoreError: string;
@@ -188,6 +210,8 @@ export interface DesktopApi {
   captureScreen(sourceId: string): Promise<string>;
   transcribe(data: ArrayBuffer, mime: string): Promise<string>;
   synthesize(text: string): Promise<string>;
+  cloneVoice(input: VoiceCloneInput): Promise<ClonedVoice>;
+  queryVoice(id: string): Promise<ClonedVoice>;
   voiceConversation(active: boolean): Promise<void>;
   setMood(mood: Mood): Promise<void>;
   focus(minutes: number): Promise<void>;

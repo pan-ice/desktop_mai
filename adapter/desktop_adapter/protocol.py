@@ -3,7 +3,6 @@
 import base64
 import binascii
 import hashlib
-import logging
 import re
 import time
 
@@ -12,7 +11,6 @@ from .config import Identity
 MAX_FRAME = 16 * 1024 * 1024
 MAX_MEDIA = 9_000_000
 CAPABILITIES = ["chat", "image", "audio"]
-logger = logging.getLogger(__name__)
 
 
 def _base64(value: object) -> bytes:
@@ -86,11 +84,32 @@ def _media_url(kind: str, value: object) -> str:
         mime = "audio/wav"
     elif raw.startswith(b"OggS"):
         mime = "audio/ogg"
-    elif raw.startswith(b"ID3") or (len(raw) > 1 and raw[0] == 255 and raw[1] & 224 == 224):
+    elif raw.startswith(b"ID3") or (
+        len(raw) >= 4 and raw[0] == 0xFF and raw[1] & 0xE0 == 0xE0 and raw[1] & 0x06 != 0
+    ):
         mime = "audio/mpeg"
     else:
         raise ValueError("不支持的语音格式（支持 MP3 / WAV / OGG）")
     return f"data:{mime};base64,{value}"
+
+
+def _reference_text(kind: str, value: object) -> str:
+    if not isinstance(value, (str, dict)) or not value:
+        raise ValueError(f"{kind}.data 必须包含引用信息")
+    if kind == "at":
+        if isinstance(value, str):
+            return "@全体成员 " if value == "all" else "@对方 "
+        name = value.get("target_user_cardname") or value.get("target_user_nickname")
+        if name is not None and not isinstance(name, str):
+            raise ValueError("at.data 昵称必须是字符串")
+        return f"@{name or '对方'} "
+    if isinstance(value, str):
+        return "[引用消息]\n"
+    content = value.get("target_message_content")
+    sender = value.get("target_message_sender_cardname") or value.get("target_message_sender_nickname")
+    if any(field is not None and not isinstance(field, str) for field in (content, sender)):
+        raise ValueError("reply.data 引用内容必须是字符串")
+    return f"[引用消息] {sender + '：' if sender else ''}{content or ''}\n"
 
 
 def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
@@ -134,7 +153,9 @@ def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
                 raise ValueError("seglist.data 必须是数组")
             for child in value:
                 visit(child, depth + 1)
-        elif kind == "text":
+        elif kind in {"text", "at", "reply"}:
+            if kind != "text":
+                value = _reference_text(kind, value)
             if not isinstance(value, str):
                 raise ValueError("text.data 必须是字符串")
             # 按 UTF-16 长度分块，与桌宠的 Zod / JavaScript 上限一致。
@@ -152,7 +173,7 @@ def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
             segments.append({"type": "audio" if kind == "voice" else "image",
                              "dataUrl": _media_url(kind, value)})
         else:
-            logger.warning("跳过桌宠不支持的消息分段 type=%s", str(kind)[:40])
+            raise ValueError(f"桌宠不支持的消息分段：{str(kind)[:40]}")
 
     visit(message.get("message_segment"))
     if not segments or len(segments) > 100:

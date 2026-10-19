@@ -9,6 +9,7 @@
 | `electron/bridge.ts` | 本机监听、握手、实例切换、请求与回执生命周期 | MaiBot 内部消息与数据库 |
 | `electron/protocol.ts` | 桌宠协议、输入校验和配置导出 | SDK 内部实现 |
 | `electron/store.ts` | 原子写入、设置版本迁移 | 内核会话计算 |
+| `electron/tts.ts` / `shared/tts.ts` | 合成与音色复刻协议、音色配置和状态、MiMo 本机参考文件；由主进程获取独立加密凭证 | MaiBot 消息协议与模型人格 |
 | 插件 `plugin.py` | SDK 网关声明、QQ 验证命令、启停和配置热更新 | 内核 `src.*` |
 | `electron/accounts.ts` | 主进程账号 RPC、登录密钥和设备凭证边界 | QQ 账号和人物标识 |
 | `electron/local-server.ts` / 插件 `local_setup.py` | 本机配置配对、重复初始化、受控中继进程与退出回收 | MaiBot 内核配置与人物身份计算 |

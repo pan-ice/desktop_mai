@@ -41,6 +41,11 @@ async def main():
                                   "platform_io_target_user_id": identity.user_id}},
             "message_segment": {"type": "seglist", "data": [
                 {"type": "text", "data": "真实消息服务回复"}, body]}}
+        if body.get("type") == "seglist" and body["data"][0].get("data") == "图文顺序测试":
+            response["message_segment"] = {"type": "seglist", "data": [
+                {"type": "text", "data": "图片之前"}, body["data"][1],
+                {"type": "text", "data": "图片之后"},
+            ]}
         # 先发一条错误收件人的消息，确认适配器不会串话。
         wrong = json.loads(json.dumps(response))
         wrong["message_info"]["additional_config"]["platform_io_target_user_id"] = "other-user"

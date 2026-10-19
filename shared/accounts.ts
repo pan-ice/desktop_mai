@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { attachmentSchema } from "./media-limits";
+import { messagePartSchema } from "./message-content";
 
 export const petAccountSchema = z
   .object({
@@ -27,8 +28,30 @@ export const cloudMessageSchema = z
     source: z.enum(["text", "voice", "screen", "proactive", "core"]),
     delivery: z.enum(["sent", "failed", "unknown"]).optional(),
     attachments: z.array(attachmentSchema).max(100).optional(),
+    parts: z.array(messagePartSchema).min(1).max(100).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((message, ctx) => {
+    if (!message.parts) return;
+    const text = message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    const indices = message.parts
+      .filter((part) => part.type === "attachment")
+      .map((part) => part.index);
+    if (
+      text !== message.text ||
+      indices.length !== (message.attachments?.length || 0) ||
+      indices.some((index, position) => index !== position)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["parts"],
+        message: "消息段与文字、附件不一致",
+      });
+    }
+  });
 export const historyPageSchema = z
   .object({
     messages: z.array(cloudMessageSchema).max(100),

@@ -19,6 +19,7 @@ import { ScreenPicker } from "../components/ScreenPicker";
 import { CameraShare } from "../components/CameraShare";
 import { speak, useRecorder } from "../hooks/useVoice";
 import type { Page, Snapshot } from "../../shared/types";
+import { messageContent } from "../../shared/message-content";
 
 export function ChatPage({
   state,
@@ -179,19 +180,20 @@ export function ChatPage({
                     {message.source === "voice" && <Mic size={11} />}
                   </div>
                   <div className="chat-bubble">
-                    {message.text && (
-                      <div className="message-text">{message.text}</div>
-                    )}
-                    {message.attachments?.map((attachment, index) =>
-                      attachment.type === "image" ? (
+                    {messageContent(message).map((part, index) =>
+                      part.type === "text" ? (
+                        <div className="message-text" key={index}>
+                          {part.text}
+                        </div>
+                      ) : part.type === "image" ? (
                         <img
                           className="message-image"
                           key={index}
-                          src={attachment.dataUrl}
-                          alt={attachment.name || "麦麦分享的图片"}
+                          src={part.dataUrl}
+                          alt={part.name || "麦麦分享的图片"}
                         />
                       ) : (
-                        <audio key={index} controls src={attachment.dataUrl} />
+                        <audio key={index} controls src={part.dataUrl} />
                       ),
                     )}
                     {message.delivery === "failed" && (

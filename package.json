@@ -20,6 +20,8 @@
     "test:message-adapter-desktop": "node scripts/message-adapter-smoke.mjs",
     "test:plugin": "node scripts/test-plugin.mjs",
     "test:desktop": "node scripts/desktop-smoke.mjs",
+    "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
+    "test:tts-clone": "node scripts/tts-clone-smoke.mjs",
     "test:window-scale": "node scripts/window-scale-smoke.mjs --dev && node scripts/window-scale-smoke.mjs",
     "test:pet-drag": "node scripts/pet-drag-smoke.mjs",
     "test:live2d": "node scripts/live2d-smoke.mjs",

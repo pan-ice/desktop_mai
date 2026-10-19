@@ -74,7 +74,10 @@ export class AccountClient {
     if (this.sockets.size >= 32) throw new Error("账号连接过多，请稍后重试");
     const ca = this.certificateAuthority(url);
     const socket = new WebSocket(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {
+        "X-Mai-Message-Parts": "1",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       handshakeTimeout: 10000,
       maxPayload: MAX_REPLY_FRAME,
       perMessageDeflate: false,

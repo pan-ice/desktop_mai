@@ -7,6 +7,7 @@ import {
 } from "../electron/protocol";
 import { defaultSettings } from "../shared/defaults";
 import { serverConnectionSchema, serverUrlSchema } from "../shared/schemas";
+import { cloudMessageSchema } from "../shared/accounts";
 
 describe("桌宠协议 v1", () => {
   it("图文与主动任务使用不同方法，客户端不承担内核消息格式", () => {
@@ -59,6 +60,60 @@ describe("桌宠协议 v1", () => {
     expect(config).toContain('desktop_url = "ws://127.0.0.1:18765/maibot"');
     expect(config).toContain('scope = "工作"');
     expect(config).not.toContain("maim_message");
+  });
+  it("保留文字、图片、文字、音频的原始顺序", () => {
+    const frame = pluginFrameSchema.parse({
+      v: 1,
+      type: "reply",
+      id: "mixed",
+      sessionId: "core-session",
+      segments: [
+        { type: "text", text: "看这张图" },
+        { type: "image", dataUrl: "data:image/png;base64,aGVsbG8=" },
+        { type: "text", text: "然后听这段声音" },
+        { type: "audio", dataUrl: "data:audio/wav;base64,aGVsbG8=" },
+      ],
+    });
+    if (frame.type !== "reply") throw new Error("错误测试数据");
+    expect(parseReply(frame)).toMatchObject({
+      parts: [
+        { type: "text", text: "看这张图" },
+        { type: "attachment", index: 0 },
+        { type: "text", text: "然后听这段声音" },
+        { type: "attachment", index: 1 },
+      ],
+    });
+  });
+  it("历史顺序必须与完整文字和全部附件对应，仍兼容旧历史", () => {
+    const message = {
+      id: "history",
+      role: "assistant",
+      text: "之前之后",
+      timestamp: 1,
+      source: "core",
+      attachments: [
+        { type: "image", dataUrl: "data:image/png;base64,aGVsbG8=" },
+      ],
+    };
+    expect(cloudMessageSchema.safeParse(message).success).toBe(true);
+    const parts = [
+      { type: "text", text: "之前" },
+      { type: "attachment", index: 0 },
+      { type: "text", text: "之后" },
+    ];
+    expect(cloudMessageSchema.safeParse({ ...message, parts }).success).toBe(
+      true,
+    );
+    for (const invalid of [
+      parts.slice(0, 2),
+      [parts[0], parts[2]],
+      [...parts, parts[1]],
+      [parts[0], { type: "attachment", index: 1 }, parts[2]],
+    ]) {
+      expect(
+        cloudMessageSchema.safeParse({ ...message, parts: invalid }).success,
+      ).toBe(false);
+    }
   });
 });
 

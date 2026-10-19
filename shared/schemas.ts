@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ttsProfileSchema, ttsProviderSchema } from "./tts";
 
 export function isLocalServerUrl(value: string): boolean {
   try {
@@ -82,6 +83,8 @@ export const settingsPatchSchema = z
     launchAtLogin: z.boolean(),
     voiceEnabled: z.boolean(),
     ttsEngine: z.enum(["system", "api"]),
+    ttsProvider: ttsProviderSchema,
+    ttsProfiles: z.record(ttsProviderSchema, ttsProfileSchema),
     systemVoice: z.string().max(300),
     speechBaseUrl: serviceUrl(["http:", "https:"]),
     sttModel: z.string().trim().min(1).max(100),

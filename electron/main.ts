@@ -28,7 +28,7 @@ import {
   ServerCertificateStore,
   type CertificateAuthorityProvider,
 } from "./server-certificates";
-import { adapterConfig, messageAdapterConfig } from "./protocol";
+import { adapterConfig, messageAdapterConfig, type Reply } from "./protocol";
 import { StateStore } from "./store";
 import {
   inlineAttachment,
@@ -48,6 +48,9 @@ import {
 } from "./live2d-core";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
+import { createClonedVoice, queryClonedVoice } from "./tts";
+import { ttsProfile, ttsProviders, voiceCloneInputSchema } from "../shared/tts";
+import { CREDENTIAL_KEYS } from "../shared/types";
 import {
   fitPetPosition,
   PET_CHARACTER,
@@ -255,6 +258,18 @@ function credential(key: CredentialKey) {
     throw new Error("系统密钥存储不可用，无法读取令牌");
   return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
+function ttsCredential(settings = store.state.settings) {
+  const key = credential(ttsProviders[settings.ttsProvider].key);
+  if (key) return key;
+  // 旧版共用语音 Key 仅在原服务地址上继续使用，不能随新服务商配置外发。
+  if (
+    settings.ttsProvider === "openai" &&
+    ttsProfile(settings).baseUrl === settings.speechBaseUrl
+  )
+    return credential("speechKey");
+  return "";
+}
+let cloningVoice = false;
 function setMood(mood: Mood, resetMs?: number) {
   if (moodTimer) clearTimeout(moodTimer);
   moodTimer = null;
@@ -710,9 +725,7 @@ async function commands(
     case "updateSettings":
       return updateSettings(settingsPatchSchema.parse(args[0]));
     case "setCredential": {
-      const key = z
-        .enum(["adapterToken", "serverToken", "speechKey"])
-        .parse(args[0]);
+      const key = z.enum(CREDENTIAL_KEYS).parse(args[0]);
       const value = z.string().max(4096).parse(args[1]);
       if (
         (key === "adapterToken" || key === "serverToken") &&
@@ -1192,12 +1205,76 @@ async function commands(
         z.string().max(120).parse(args[1]),
       );
     }
-    case "synthesize":
-      return synthesizeAudio(
-        store.state.settings,
-        credential("speechKey"),
-        z.string().min(1).max(12000).parse(args[0]),
+    case "synthesize": {
+      const selected = store.state.settings;
+      const cloned = store.state.clonedVoices.find(
+        (voice) =>
+          voice.provider === selected.ttsProvider &&
+          voice.voiceId === ttsProfile(selected).voice &&
+          voice.profile.baseUrl === ttsProfile(selected).baseUrl,
       );
+      if (
+        cloned &&
+        (cloned.status !== "ready" ||
+          cloned.profile.model !== ttsProfile(selected).model)
+      )
+        throw new Error(
+          "当前复刻音色尚未就绪或模型不匹配，请查询状态或重新选择音色",
+        );
+      return synthesizeAudio(
+        selected,
+        ttsCredential(),
+        z.string().min(1).max(12000).parse(args[0]),
+        store.directory,
+      );
+    }
+    case "cloneVoice": {
+      if (cloningVoice) throw new Error("已有音色正在提交复刻，请稍候");
+      cloningVoice = true;
+      try {
+        const settings = structuredClone(store.state.settings);
+        if (store.state.clonedVoices.length >= 100)
+          throw new Error("已保存 100 个复刻音色，请使用已有音色");
+        const voice = await createClonedVoice(
+          settings,
+          ttsCredential(settings),
+          voiceCloneInputSchema.parse(args[0]),
+          store.directory,
+        );
+        const previous = store.state.clonedVoices.findIndex(
+          (saved) =>
+            saved.provider === voice.provider &&
+            saved.voiceId === voice.voiceId &&
+            saved.profile.baseUrl === voice.profile.baseUrl,
+        );
+        if (previous < 0) store.state.clonedVoices.push(voice);
+        else {
+          voice.id = store.state.clonedVoices[previous].id;
+          store.state.clonedVoices[previous] = voice;
+        }
+        await store.save();
+        broadcast();
+        return voice;
+      } finally {
+        cloningVoice = false;
+      }
+    }
+    case "queryVoice": {
+      const id = z.string().uuid().parse(args[0]);
+      const index = store.state.clonedVoices.findIndex(
+        (voice) => voice.id === id,
+      );
+      if (index < 0) throw new Error("找不到该复刻音色");
+      const previous = store.state.clonedVoices[index];
+      const voice = await queryClonedVoice(
+        previous,
+        credential(ttsProviders[previous.provider].key),
+      );
+      store.state.clonedVoices[index] = voice;
+      await store.save();
+      broadcast();
+      return voice;
+    }
     case "voiceConversation": {
       const active = z.boolean().parse(args[0]);
       if (active && bridge.phase !== "connected")
@@ -1481,56 +1558,44 @@ void app
           activity("同步聊天记录清空操作失败，请重新连接重试", "error"),
         );
     });
-    bridge.on(
-      "reply",
-      (
-        reply: {
-          id: string;
-          text: string;
-          attachments: ChatMessage["attachments"];
-        },
-        acknowledge: (error?: Error) => void,
-      ) => {
-        const history = store.state.history;
-        replyQueue = replyQueue
-          .then(async () => {
-            if (
-              history.some(
-                (message) =>
-                  message.id === reply.id && message.role === "assistant",
-              )
-            ) {
-              await store.flush();
-              acknowledge();
-              return;
-            }
-            const attachments = [];
-            for (const attachment of reply.attachments || [])
-              attachments.push(
-                await saveAttachment(store.directory, attachment),
-              );
-            history.push({
-              ...reply,
-              attachments: attachments.length ? attachments : undefined,
-              role: "assistant",
-              timestamp: Date.now(),
-              source: "core",
-            });
-            if (history.length > 1000) history.splice(0, history.length - 1000);
-            lastInteraction = Date.now();
-            setMood("happy", 10000);
-            await store.save();
-            broadcast();
+    bridge.on("reply", (reply: Reply, acknowledge: (error?: Error) => void) => {
+      const history = store.state.history;
+      replyQueue = replyQueue
+        .then(async () => {
+          if (
+            history.some(
+              (message) =>
+                message.id === reply.id && message.role === "assistant",
+            )
+          ) {
+            await store.flush();
             acknowledge();
-          })
-          .catch((error) => {
-            acknowledge(
-              error instanceof Error ? error : new Error(String(error)),
-            );
-            activity(`保存内核回复失败：${String(error)}`, "error");
+            return;
+          }
+          const attachments = [];
+          for (const attachment of reply.attachments || [])
+            attachments.push(await saveAttachment(store.directory, attachment));
+          history.push({
+            ...reply,
+            attachments: attachments.length ? attachments : undefined,
+            role: "assistant",
+            timestamp: Date.now(),
+            source: "core",
           });
-      },
-    );
+          if (history.length > 1000) history.splice(0, history.length - 1000);
+          lastInteraction = Date.now();
+          setMood("happy", 10000);
+          await store.save();
+          broadcast();
+          acknowledge();
+        })
+        .catch((error) => {
+          acknowledge(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+          activity(`保存内核回复失败：${String(error)}`, "error");
+        });
+    });
     localServer.on("log", (text: string) => activity(text));
     createDashboard();
     createPet();

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, showToast } from "../api";
-import type { ChatMessage, Settings, Snapshot } from "../../shared/types";
+import { speechSegments } from "../../shared/speech-text";
+import type { Settings, Snapshot } from "../../shared/types";
 
 export function useRecorder(onText: (text: string) => Promise<void> | void) {
   const [recording, setRecording] = useState(false);
@@ -118,63 +119,81 @@ export async function speak(
 ) {
   stopSpeech(!preserveQueue);
   const generation = playbackGeneration;
-  let complete: () => void = () => {};
-  const ended = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  cancelPlayback = complete;
-  const finish = () => {
-    complete();
-    if (generation === playbackGeneration) {
-      cancelPlayback = null;
-      void api.setMood("idle");
+  const segments =
+    dataUrl || settings.ttsEngine === "system"
+      ? [text]
+      : speechSegments(text, settings.ttsProvider);
+  for (const segment of segments) {
+    if (generation !== playbackGeneration) return;
+    if (!dataUrl && !segment.trim()) continue;
+    let complete: () => void = () => {};
+    const ended = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    cancelPlayback = complete;
+    const finish = () => {
+      complete();
+      if (generation === playbackGeneration) {
+        cancelPlayback = null;
+        void api.setMood("idle");
+      }
+    };
+    try {
+      if (dataUrl || settings.ttsEngine === "api") {
+        const url =
+          dataUrl ||
+          (await Promise.race([
+            api.synthesize(segment),
+            ended.then(() => null),
+          ]));
+        if (generation !== playbackGeneration || !url) return;
+        const audio = new Audio(url);
+        currentAudio = audio;
+        audio.volume = settings.speechVolume;
+        if (!dataUrl && settings.ttsProvider === "mimo")
+          audio.playbackRate = settings.speechRate;
+        audio.onended = finish;
+        audio.onerror = () => {
+          finish();
+          showToast("语音无法播放，请检查音频输出设备", true);
+        };
+        await api.setMood("speaking");
+        if (generation !== playbackGeneration) return;
+        await audio.play();
+      } else {
+        const voices = speechSynthesis.getVoices();
+        const utterance = new SpeechSynthesisUtterance(segment);
+        utterance.lang = "zh-CN";
+        utterance.rate = settings.speechRate;
+        utterance.volume = settings.speechVolume;
+        utterance.voice =
+          voices.find((voice) => voice.voiceURI === settings.systemVoice) ||
+          voices.find((voice) => voice.lang.startsWith("zh")) ||
+          null;
+        utterance.onstart = () => {
+          void api.setMood("speaking");
+        };
+        utterance.onend = finish;
+        utterance.onerror = (event) => {
+          finish();
+          if (event.error !== "interrupted" && event.error !== "canceled")
+            showToast(`系统朗读失败：${event.error}`, true);
+        };
+        speechSynthesis.speak(utterance);
+      }
+      await ended;
+    } catch (error) {
+      finish();
+      if (generation === playbackGeneration)
+        showToast(error instanceof Error ? error.message : String(error), true);
+      return;
     }
-  };
-  try {
-    if (dataUrl || settings.ttsEngine === "api") {
-      const url = dataUrl || (await api.synthesize(text));
-      if (generation !== playbackGeneration) return;
-      const audio = new Audio(url);
-      currentAudio = audio;
-      audio.volume = settings.speechVolume;
-      audio.onended = finish;
-      audio.onerror = () => {
-        finish();
-        showToast("语音无法播放，请检查音频输出设备", true);
-      };
-      await api.setMood("speaking");
-      await audio.play();
-    } else {
-      const voices = speechSynthesis.getVoices();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "zh-CN";
-      utterance.rate = settings.speechRate;
-      utterance.volume = settings.speechVolume;
-      utterance.voice =
-        voices.find((voice) => voice.voiceURI === settings.systemVoice) ||
-        voices.find((voice) => voice.lang.startsWith("zh")) ||
-        null;
-      utterance.onstart = () => {
-        void api.setMood("speaking");
-      };
-      utterance.onend = finish;
-      utterance.onerror = (event) => {
-        finish();
-        if (event.error !== "interrupted" && event.error !== "canceled")
-          showToast(`系统朗读失败：${event.error}`, true);
-      };
-      speechSynthesis.speak(utterance);
-    }
-    await ended;
-  } catch (error) {
-    finish();
-    showToast(error instanceof Error ? error.message : String(error), true);
   }
 }
 
 export function useSpeechReplies(state: Snapshot) {
   const seen = useRef(new Set<string>());
-  const queue = useRef<ChatMessage[]>([]);
+  const queue = useRef<{ text: string; dataUrl?: string }[]>([]);
   const playing = useRef(false);
   const current = useRef(state);
   current.current = state;
@@ -188,8 +207,17 @@ export function useSpeechReplies(state: Snapshot) {
         !state.focusUntil &&
         reply.timestamp >= started.current &&
         (reply.text || reply.attachments?.some((item) => item.type === "audio"))
-      )
-        queue.current.push(reply);
+      ) {
+        const voices =
+          reply.attachments?.filter((item) => item.type === "audio") || [];
+        if (voices.length) {
+          queue.current.push(
+            ...voices.map((voice) => ({ text: "", dataUrl: voice.dataUrl })),
+          );
+        } else {
+          queue.current.push({ text: reply.text });
+        }
+      }
     }
     if (seen.current.size > 2000)
       seen.current = new Set(state.history.map((message) => message.id));
@@ -207,10 +235,7 @@ export function useSpeechReplies(state: Snapshot) {
             break;
           }
           const reply = queue.current.shift()!;
-          const voice = reply.attachments?.find(
-            (item) => item.type === "audio",
-          );
-          await speak(reply.text, snapshot.settings, voice?.dataUrl, true);
+          await speak(reply.text, snapshot.settings, reply.dataUrl, true);
         }
       } finally {
         playing.current = false;

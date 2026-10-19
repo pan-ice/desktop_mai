@@ -174,6 +174,9 @@ try {
   await page.screenshot({ path: join(base, "chat.png"), fullPage: true });
   await page.getByRole("button", { name: "偏好设置", exact: true }).click();
   await page.getByRole("switch", { name: "始终置顶", exact: true }).click();
+  await page
+    .locator('[role="switch"][aria-label="始终置顶"][aria-checked="false"]')
+    .waitFor();
   const alwaysOnTop = await desktop.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()
       .find((window) => window.webContents.getURL().includes("view=pet"))
@@ -240,7 +243,7 @@ try {
   await page
     .getByRole("textbox", { name: "API Base URL" })
     .fill(`http://127.0.0.1:${address.port}/v1`);
-  await page.getByRole("button", { name: "保存声音设置", exact: true }).click();
+  await page.getByRole("button", { name: "保存转写设置", exact: true }).click();
   const transcript = await page.evaluate(async () =>
     window.mai.transcribe(new Uint8Array(2500).buffer, "audio/webm"),
   );

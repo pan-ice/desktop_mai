@@ -22,6 +22,8 @@ export const defaultSettings: Settings = {
   launchAtLogin: false,
   voiceEnabled: false,
   ttsEngine: "system",
+  ttsProvider: "openai",
+  ttsProfiles: {},
   systemVoice: "",
   speechBaseUrl: "https://api.openai.com/v1",
   sttModel: "whisper-1",
@@ -49,8 +51,18 @@ export const defaultSettings: Settings = {
 
 export function emptySnapshot(desktop = false): Snapshot {
   return {
-    settings: { ...defaultSettings },
-    credentials: { adapterToken: false, serverToken: false, speechKey: false },
+    settings: { ...defaultSettings, ttsProfiles: {} },
+    credentials: {
+      adapterToken: false,
+      serverToken: false,
+      speechKey: false,
+      ttsOpenaiKey: false,
+      ttsSiliconflowKey: false,
+      ttsBailianKey: false,
+      ttsMinimaxKey: false,
+      ttsVolcengineKey: false,
+      ttsMimoKey: false,
+    },
     connection: {
       phase: "disconnected",
       detail: "等待连接 MaiBot",
@@ -64,6 +76,7 @@ export function emptySnapshot(desktop = false): Snapshot {
       before: null,
     },
     models: [],
+    clonedVoices: [],
     live2dCoreReady: false,
     live2dCoreDownloading: false,
     live2dCoreError: "",

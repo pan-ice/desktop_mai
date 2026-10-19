@@ -10,6 +10,8 @@ import {
   saveAttachment,
 } from "../electron/media";
 import { parseReply, pluginFrameSchema } from "../electron/protocol";
+import { StateStore } from "../electron/store";
+import { messageContent } from "../shared/message-content";
 
 let folder = "";
 afterEach(async () => {
@@ -37,6 +39,53 @@ it("附件分离保存，导出可还原内容，清理只触及失去引用的�
   ).toThrow();
   await pruneMedia(folder, []);
   await expect(readFile(mediaFile(folder, saved.dataUrl))).rejects.toThrow();
+});
+
+it("交错图文的顺序在媒体落盘、重启与历史导出后保持一致", async () => {
+  await mkdir(resolve(".cache/tests"), { recursive: true });
+  folder = await mkdtemp(resolve(".cache/tests/mixed-"));
+  const segments = [
+    { type: "text", text: "图片之前" },
+    { type: "image", dataUrl: "data:image/png;base64,aGVsbG8=" },
+    { type: "text", text: "图片之后" },
+    { type: "audio", dataUrl: "data:audio/wav;base64,aGVsbG8=" },
+  ];
+  const frame = pluginFrameSchema.parse({
+    v: 1,
+    type: "reply",
+    id: "mixed",
+    sessionId: "session",
+    segments,
+  });
+  if (frame.type !== "reply") throw new Error("错误测试数据");
+  const reply = parseReply(frame);
+  const store = new StateStore(folder);
+  store.state.history.push({
+    ...reply,
+    role: "assistant",
+    source: "core",
+    timestamp: 1,
+    attachments: await Promise.all(
+      reply.attachments.map((item) => saveAttachment(folder, item)),
+    ),
+  });
+  await store.save();
+  const restored = new StateStore(folder);
+  await restored.load();
+  const message = restored.state.history[0];
+  expect(message.parts).toEqual(reply.parts);
+  const exported = {
+    ...message,
+    attachments: await Promise.all(
+      message.attachments!.map((item) => inlineAttachment(folder, item)),
+    ),
+  };
+  const page = historyPageSchema.parse({
+    messages: [exported],
+    before: 1,
+    hasMore: false,
+  });
+  expect(messageContent(page.messages[0])).toEqual(segments);
 });
 
 it.each(["wav", "ogg"])(

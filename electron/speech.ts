@@ -1,4 +1,5 @@
 import type { Settings } from "../shared/types";
+import { synthesizeTts } from "./tts";
 
 export function speechEndpoint(base: string, path: string) {
   const url = new URL(base);
@@ -65,28 +66,7 @@ export async function synthesizeAudio(
   settings: Settings,
   key: string,
   text: string,
+  dataDirectory?: string,
 ): Promise<string> {
-  const response = await fetch(
-    speechEndpoint(settings.speechBaseUrl, "audio/speech"),
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(key ? { Authorization: `Bearer ${key}` } : {}),
-      },
-      body: JSON.stringify({
-        model: settings.ttsModel,
-        input: text.slice(0, 4000),
-        voice: settings.ttsVoice,
-        response_format: "mp3",
-        speed: settings.speechRate,
-      }),
-      signal: AbortSignal.timeout(60000),
-      redirect: "error",
-    },
-  );
-  await checkResponse(response);
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > 25 * 1024 * 1024) throw new Error("语音合成结果过大");
-  return `data:audio/mpeg;base64,${Buffer.from(bytes).toString("base64")}`;
+  return synthesizeTts(settings, key, text, dataDirectory);
 }

@@ -156,6 +156,23 @@ try {
     state.history.find((message) => message.role === "user").delivery,
     "sent",
   );
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
+  await page.evaluate(async (image) => {
+    await window.mai.updateSettings({ screenEnabled: true });
+    await window.mai.send({ text: "图文顺序测试", image });
+  }, `data:image/png;base64,${png}`);
+  await page.getByText("图片之后", { exact: true }).waitFor();
+  const mixed = page.locator(".message-row.assistant .chat-bubble").last();
+  assert.deepEqual(
+    await mixed.evaluate((bubble) =>
+      Array.from(bubble.children, (child) => child.tagName),
+    ),
+    ["DIV", "IMG", "DIV"],
+  );
+  await until(
+    () => events.filter((event) => event.event === "echo").length === 2,
+  );
   await page.screenshot({ path: join(base, "chat.png"), fullPage: true });
   await page.evaluate(() => window.mai.quit()).catch(() => {});
   await desktop.close();
@@ -163,8 +180,13 @@ try {
   const saved = JSON.parse(await readFile(join(profile, "state.json"), "utf8"));
   assert.equal(
     saved.history.filter((message) => message.role === "assistant").length,
-    1,
+    2,
   );
+  assert.deepEqual(saved.history.at(-1).parts, [
+    { type: "text", text: "图片之前" },
+    { type: "attachment", index: 0 },
+    { type: "text", text: "图片之后" },
+  ]);
   assert.ok(saved.encrypted.adapterToken);
   assert.deepEqual(pageErrors, []);
   assert.equal(adapterErrors.includes("Traceback"), false);
@@ -181,6 +203,7 @@ try {
           "未知收件人拒绝",
           "主动任务能力限制",
           "退出后历史持久化",
+          "混合消息原始顺序",
         ],
       },
       null,

@@ -1147,6 +1147,45 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.tts-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.voice-clone-options {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.voice-clone-options > summary {
+  cursor: pointer;
+  color: var(--green-dark);
+  font-size: 12px;
+}
+.voice-clone-options audio {
+  width: 100%;
+  margin-bottom: 16px;
+}
+.cloned-voice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.cloned-voice small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.cloned-voice .form-actions {
+  margin: 0;
+}
 .field {
   display: flex;
   flex-direction: column;

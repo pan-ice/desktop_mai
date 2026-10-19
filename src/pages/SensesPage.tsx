@@ -9,14 +9,14 @@ import {
   Monitor,
   Send,
   Square,
-  Volume2,
   X,
 } from "lucide-react";
 import { api, perform, showToast } from "../api";
 import { Field, Panel, SettingToggle, Toggle } from "../components/ui";
 import { ScreenPicker } from "../components/ScreenPicker";
 import { CameraShare } from "../components/CameraShare";
-import { speak, stopSpeech, useRecorder } from "../hooks/useVoice";
+import { useRecorder } from "../hooks/useVoice";
+import { TtsSettings } from "../components/TtsSettings";
 import type { Settings, Snapshot } from "../../shared/types";
 
 export function useSettingsDraft(settings: Settings) {
@@ -31,7 +31,6 @@ export function useSettingsDraft(settings: Settings) {
 export function SensesPage({ state }: { state: Snapshot }) {
   const { draft, change } = useSettingsDraft(state.settings);
   const [key, setKey] = useState("");
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [transcript, setTranscript] = useState("");
   const [screens, setScreens] = useState(false);
   const [capture, setCapture] = useState("");
@@ -42,12 +41,6 @@ export function SensesPage({ state }: { state: Snapshot }) {
     setTranscript(text);
     showToast("转写完成，测试录音没有发送给 MaiBot");
   });
-  useEffect(() => {
-    const update = () => setVoices(speechSynthesis.getVoices());
-    update();
-    speechSynthesis.addEventListener("voiceschanged", update);
-    return () => speechSynthesis.removeEventListener("voiceschanged", update);
-  }, []);
   const saveSpeech = () =>
     perform(async () => {
       if (key) {
@@ -55,18 +48,12 @@ export function SensesPage({ state }: { state: Snapshot }) {
         setKey("");
       }
       await api.updateSettings({
-        ttsEngine: draft.ttsEngine,
-        systemVoice: draft.systemVoice,
         speechBaseUrl: draft.speechBaseUrl,
         sttModel: draft.sttModel,
-        ttsModel: draft.ttsModel,
-        ttsVoice: draft.ttsVoice,
-        speechRate: draft.speechRate,
-        speechVolume: draft.speechVolume,
         vadSensitivity: draft.vadSensitivity,
         vadSilenceMs: draft.vadSilenceMs,
       });
-    }, "声音设置已保存");
+    }, "转写设置已保存");
   return (
     <>
       <div className="page-heading">
@@ -82,98 +69,21 @@ export function SensesPage({ state }: { state: Snapshot }) {
       </div>
       <div className="settings-columns">
         <div className="settings-stack">
+          <TtsSettings state={state} />
           <Panel
-            title="让麦麦的声音陪着你"
-            subtitle="文字回复可以使用系统语音或兼容 OpenAI 的语音服务朗读。"
-            action={<Volume2 size={19} className="muted" />}
+            title="录音与转写"
+            subtitle="把你的声音转为文字后交给 MaiBot，与文字朗读分开配置。"
+            action={<Mic size={19} className="muted" />}
           >
-            <SettingToggle
-              state={state}
-              name="voiceEnabled"
-              label="自动朗读回复"
-              hint="只在桌宠窗口播放；专注模式会自动安静下来。"
-            />
             <form
               onSubmit={(event) => {
                 event.preventDefault();
                 void saveSpeech();
               }}
             >
-              <div className="form-grid">
-                <Field label="朗读方式">
-                  <select
-                    value={draft.ttsEngine}
-                    onChange={(event) =>
-                      change(
-                        "ttsEngine",
-                        event.target.value as Settings["ttsEngine"],
-                      )
-                    }
-                  >
-                    <option value="system">系统语音 · 无需 API</option>
-                    <option value="api">语音 API</option>
-                  </select>
-                </Field>
-                <Field
-                  label={draft.ttsEngine === "system" ? "系统声音" : "API 音色"}
-                >
-                  {draft.ttsEngine === "system" ? (
-                    <select
-                      value={draft.systemVoice}
-                      onChange={(event) =>
-                        change("systemVoice", event.target.value)
-                      }
-                    >
-                      <option value="">自动选择中文声音</option>
-                      {voices.map((voice) => (
-                        <option key={voice.voiceURI} value={voice.voiceURI}>
-                          {voice.name} · {voice.lang}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={draft.ttsVoice}
-                      onChange={(event) =>
-                        change("ttsVoice", event.target.value)
-                      }
-                    />
-                  )}
-                </Field>
-                <Field label={`语速 · ${draft.speechRate.toFixed(1)}×`}>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="2"
-                    step="0.1"
-                    value={draft.speechRate}
-                    onChange={(event) =>
-                      change("speechRate", Number(event.target.value))
-                    }
-                  />
-                </Field>
-                <Field
-                  label={`音量 · ${Math.round(draft.speechVolume * 100)}%`}
-                >
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={draft.speechVolume}
-                    onChange={(event) =>
-                      change("speechVolume", Number(event.target.value))
-                    }
-                  />
-                </Field>
-              </div>
-              <div className="subsection-label">
-                语音服务连接{" "}
-                <span>用于录音转写；选择 API 朗读时也使用此服务</span>
-              </div>
               <Field
                 label="API Base URL"
-                hint="填写兼容 OpenAI 的服务地址，保留 /v1 等路径。"
+                hint="填写兼容 OpenAI 的转写服务地址，保留 /v1 等路径。"
               >
                 <input
                   type="url"
@@ -185,11 +95,11 @@ export function SensesPage({ state }: { state: Snapshot }) {
                 />
               </Field>
               <Field
-                label="API Key"
+                label="转写 API Key"
                 hint={
                   state.credentials.speechKey
-                    ? "已加密保存，留空表示继续使用。"
-                    : "录音会发送到你配置的语音服务进行转写。"
+                    ? "已加密保存，留空继续使用。"
+                    : "录音会发送到此服务进行转写。"
                 }
               >
                 <input
@@ -199,65 +109,35 @@ export function SensesPage({ state }: { state: Snapshot }) {
                   placeholder={
                     state.credentials.speechKey
                       ? "已保存 · 输入可替换"
-                      : "输入服务商 API Key；本地服务可留空"
+                      : "输入转写服务 Key；本地服务可留空"
                   }
                   onChange={(event) => setKey(event.target.value)}
                 />
               </Field>
-              <div className="form-grid">
-                <Field label="转写模型">
-                  <input
-                    required
-                    value={draft.sttModel}
-                    onChange={(event) => change("sttModel", event.target.value)}
-                  />
-                </Field>
-                <Field label="语音合成模型">
-                  <input
-                    required
-                    value={draft.ttsModel}
-                    onChange={(event) => change("ttsModel", event.target.value)}
-                  />
-                </Field>
-              </div>
+              <Field label="转写模型">
+                <input
+                  required
+                  value={draft.sttModel}
+                  onChange={(event) => change("sttModel", event.target.value)}
+                />
+              </Field>
               <div className="form-actions">
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => {
-                    void speak(
-                      `你好，我是${state.settings.nickname}。今天也想陪你一起度过。`,
-                      draft,
-                    );
-                  }}
-                >
-                  <Volume2 size={15} />
-                  试听声音
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="停止试听"
-                  onClick={() => stopSpeech()}
-                >
-                  <Square size={15} />
-                </button>
                 <button className="button primary" type="submit">
-                  保存声音设置
+                  保存转写设置
                 </button>
               </div>
               {state.credentials.speechKey && (
                 <button
                   type="button"
                   className="text-button small muted"
-                  onClick={() => {
+                  onClick={() =>
                     void perform(
                       () => api.setCredential("speechKey", ""),
-                      "已清除语音 API Key",
-                    );
-                  }}
+                      "已清除转写 Key",
+                    )
+                  }
                 >
-                  清除已保存的语音 Key
+                  清除转写 Key
                 </button>
               )}
             </form>

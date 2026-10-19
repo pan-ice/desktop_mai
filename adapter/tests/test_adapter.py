@@ -125,10 +125,31 @@ class MessageTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 build_reply(IDENTITY, value, "channel")
 
-    def test_unknown_segments_skip_without_losing_text(self):
+    def test_unknown_segment_rejects_whole_reply_without_false_save_ack(self):
+        with self.assertRaisesRegex(ValueError, "不支持"):
+            build_reply(IDENTITY, reply({"type": "seglist", "data": [
+                {"type": "future-type", "data": {}}, {"type": "text", "data": "不能只保存这一段"}]}), "channel")
+
+    def test_legacy_mentions_and_reply_ids_are_readable(self):
         result = build_reply(IDENTITY, reply({"type": "seglist", "data": [
-            {"type": "file", "data": {}}, {"type": "text", "data": "仍可聊天"}]}), "channel")
-        self.assertEqual(result["segments"], [{"type": "text", "text": "仍可聊天"}])
+            {"type": "at", "data": "desktop_owner"}, {"type": "reply", "data": "previous"},
+            {"type": "text", "data": "回复正文"}]}), "channel")
+        text = "".join(part["text"] for part in result["segments"])
+        self.assertIn("@对方", text)
+        self.assertIn("[引用消息]", text)
+        self.assertIn("回复正文", text)
+
+    def test_unsupported_content_is_not_silently_saved_as_a_partial_reply(self):
+        for kind, data in [("file", {"name": "报告.pdf"}), ("forward", []),
+                           ("dict", {"type": "card", "data": {}})]:
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "不支持"):
+                build_reply(IDENTITY, reply({"type": "seglist", "data": [
+                    {"type": "text", "data": "附件在后面"}, {"type": kind, "data": data}]}), "channel")
+
+    def test_unsupported_audio_is_not_mislabeled_as_mp3_or_wav(self):
+        for raw in (b"RIFF0000WEBP", b"\xff\xf1\x50\x80", b"not an audio file"):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, "语音格式"):
+                build_reply(IDENTITY, reply({"type": "voice", "data": base64.b64encode(raw).decode()}), "channel")
 
     def test_long_unicode_reply_chunks_for_javascript_limit(self):
         text = "长😀" * 8001
@@ -214,6 +235,13 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.bridge.pending_replies[self.socket.frames[-1]["id"]].set_result(False)
         await task
         self.client.send_custom_message.assert_not_awaited()
+
+    async def test_unsupported_reply_does_not_send_partial_content_or_success_echo(self):
+        await self.bridge.receive(reply({"type": "seglist", "data": [
+            {"type": "text", "data": "不能只收到这一段"}, {"type": "file", "data": {"name": "附件.pdf"}}]}))
+        self.assertEqual(self.socket.frames, [])
+        self.client.send_custom_message.assert_not_awaited()
+        self.assertEqual(self.bridge.delivered, {})
 
 
 if __name__ == "__main__":

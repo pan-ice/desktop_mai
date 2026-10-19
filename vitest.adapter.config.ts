@@ -6,6 +6,7 @@ export default defineConfig({
       "tests/adapter.integration.ts",
       "tests/server.integration.ts",
       "tests/local-server.integration.ts",
+      "tests/maibot-contract.integration.ts",
     ],
     testTimeout: 20000,
   },

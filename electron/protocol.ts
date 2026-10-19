@@ -6,6 +6,7 @@ import {
 } from "../shared/media-limits";
 export { MAX_REPLY_FRAME } from "../shared/media-limits";
 import type { Attachment, Settings } from "../shared/types";
+import type { MessagePart } from "../shared/message-content";
 
 export const PROTOCOL = "mai-desktop";
 export const MAX_FRAME = 16 * 1024 * 1024;
@@ -82,6 +83,7 @@ export interface Reply {
   id: string;
   text: string;
   attachments: Attachment[];
+  parts: MessagePart[];
 }
 
 export function identity(settings: Settings) {
@@ -116,11 +118,17 @@ export function buildRequest(
 export function parseReply(frame: PluginReply): Reply {
   const text: string[] = [];
   const attachments: Attachment[] = [];
+  const parts: MessagePart[] = [];
   for (const segment of frame.segments) {
-    if (segment.type === "text") text.push(segment.text);
-    else attachments.push({ type: segment.type, dataUrl: segment.dataUrl });
+    if (segment.type === "text") {
+      text.push(segment.text);
+      parts.push({ type: "text", text: segment.text });
+    } else {
+      parts.push({ type: "attachment", index: attachments.length });
+      attachments.push({ type: segment.type, dataUrl: segment.dataUrl });
+    }
   }
-  return { id: frame.id, text: text.join(""), attachments };
+  return { id: frame.id, text: text.join(""), attachments, parts };
 }
 
 export function adapterConfig(settings: Settings, token: string): string {

@@ -4,12 +4,15 @@ import { z } from "zod";
 import { defaultSettings, emptySnapshot } from "../shared/defaults";
 import { serverUrlSchema, settingsPatchSchema } from "../shared/schemas";
 import type { CredentialKey, Snapshot } from "../shared/types";
+import { CREDENTIAL_KEYS } from "../shared/types";
+import { clonedVoiceSchema } from "../shared/tts";
 
 interface Persisted {
   version: 2;
   settings: Snapshot["settings"];
   history: Snapshot["history"];
   models: Snapshot["models"];
+  clonedVoices?: Snapshot["clonedVoices"];
   encrypted: Partial<Record<CredentialKey, string>>;
   petPosition?: { x: number; y: number };
   historyScope?: string;
@@ -53,6 +56,7 @@ export class StateStore {
       }
       this.state.settings = {
         ...defaultSettings,
+        ttsProfiles: {},
         ...settingsPatchSchema.parse(data.settings),
       };
       this.state.history = data.history.slice(-1000);
@@ -65,9 +69,13 @@ export class StateStore {
         )
         .parse(data.removedServerAccounts ?? {});
       this.state.models = data.models;
+      this.state.clonedVoices = z
+        .array(clonedVoiceSchema)
+        .max(100)
+        .parse(data.clonedVoices ?? []);
       this.encrypted = data.encrypted;
       this.petPosition = data.petPosition;
-      for (const key of ["adapterToken", "serverToken", "speechKey"] as const)
+      for (const key of CREDENTIAL_KEYS)
         this.state.credentials[key] = Boolean(this.encrypted[key]);
       if (data.version === 1) await this.save();
     } catch (error) {
@@ -85,6 +93,7 @@ export class StateStore {
         settings: this.state.settings,
         history: this.state.history.slice(-1000),
         models: this.state.models,
+        clonedVoices: this.state.clonedVoices,
         encrypted: this.encrypted,
         petPosition: this.petPosition,
         historyScope: this.historyScope,
