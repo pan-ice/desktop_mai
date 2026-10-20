@@ -26,6 +26,9 @@ describe("持久化版本迁移", () => {
           speechBaseUrl: "http://localhost:9000/v1",
           ttsModel: "existing-model",
           ttsVoice: "existing-voice",
+          ttsNaturalSpeech: true,
+          ttsCloneFidelity: true,
+          speechRate: 1.3,
         },
         history: [],
         models: [],
@@ -42,6 +45,10 @@ describe("持久化版本迁移", () => {
     expect(store.state.clonedVoices).toEqual([]);
     expect(store.state.credentials.speechKey).toBe(true);
     expect(store.state.credentials.ttsSiliconflowKey).toBe(false);
+    expect(store.state.settings.ttsNativeOutput).toBe(true);
+    expect(store.state.settings.ttsNaturalSpeech).toBe(true);
+    expect(store.state.settings.ttsCloneFidelity).toBe(true);
+    expect(store.state.settings.speechRate).toBe(1.3);
   });
   it("五家合成配置、复刻音色与密文独立保存并重启恢复", async () => {
     const base = resolve(".cache/tests");

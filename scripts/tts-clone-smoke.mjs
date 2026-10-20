@@ -12,7 +12,12 @@ await writeFile(
   join(profile, "state.json"),
   JSON.stringify({
     version: 2,
-    settings: { autoConnect: false },
+    settings: {
+      autoConnect: false,
+      ttsNaturalSpeech: true,
+      ttsCloneFidelity: true,
+      speechRate: 1.3,
+    },
     history: [],
     models: [],
     encrypted: {},
@@ -36,6 +41,7 @@ await writeFile(fixture, wav);
 const requests = [],
   errors = [];
 let origin;
+let naturalMimo = false;
 const service = createServer(async (req, res) => {
   try {
     const chunks = [];
@@ -74,8 +80,12 @@ const service = createServer(async (req, res) => {
     else assert.equal(req.headers.authorization, `Bearer test-${provider}-key`);
     const send = (data) => res.end(JSON.stringify(data));
     if (req.url.endsWith("/chat/completions")) {
-      assert.equal(body.messages.length, 1);
-      assert.equal(body.messages[0].role, "assistant");
+      assert.equal(body.messages.length, naturalMimo ? 2 : 1);
+      if (naturalMimo) {
+        assert.equal(body.messages[0].role, "user");
+        assert.ok(body.messages[0].content.includes("自然"));
+      }
+      assert.equal(body.messages.at(-1).role, "assistant");
       assert.equal(body.stream, false);
       assert.equal(body.audio.format, "wav");
       assert.equal(
@@ -187,6 +197,7 @@ try {
     window.Audio = class {
       constructor(url) {
         this.url = url;
+        this.playbackRate = 1;
       }
       async play() {
         window.__played.push(this.url);
@@ -197,7 +208,14 @@ try {
     };
   });
   const voices = {};
+  await page.locator(".tts-advanced > summary").click();
   await page.getByLabel("朗读方式").selectOption("api");
+  assert.equal(
+    await page
+      .getByRole("switch", { name: "模型原生输出", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
   for (const provider of providers) {
     await page.getByLabel("语音服务商").selectOption(provider);
     await page.getByLabel("合成服务地址").fill(`${origin}/${provider}`);
@@ -222,7 +240,10 @@ try {
       await page
         .getByLabel("参考音频链接")
         .fill("https://reference.example.com/ref.wav");
-    else await page.locator('input[type="file"]').setInputFiles(fixture);
+    else
+      await page
+        .locator('.voice-clone-options input[type="file"]')
+        .setInputFiles(fixture);
     if (provider === "siliconflow")
       await page.getByLabel("参考音频原文").fill("这是参考音频对应的原文。");
     if (provider === "volcengine")
@@ -277,7 +298,8 @@ try {
     );
     if (provider === "mimo") {
       await page.evaluate(() => window.mai.updateSettings({ speechRate: 1.3 }));
-      await page.getByLabel("语速 · 1.3×").waitFor();
+      assert.equal(await page.getByLabel("语速 · 模型原速").isDisabled(), true);
+      assert.equal(await page.getByLabel("语速 · 模型原速").inputValue(), "1");
     }
     const played = await page.evaluate(() => window.__played.length);
     await page.getByRole("button", { name: "试听声音", exact: true }).click();
@@ -310,8 +332,43 @@ try {
         `data:audio/wav;base64,${wav.toString("base64")}`,
       );
       assert.equal(synth.body.model, "mimo-v2.5-tts-voiceclone");
-      assert.equal(await page.evaluate(() => window.__rates.at(-1)), 1.3);
+      assert.equal(await page.evaluate(() => window.__rates.at(-1)), 1);
       await page.screenshot({ path: join(base, "mimo.png"), fullPage: true });
+      await page
+        .getByRole("switch", { name: "模型原生输出", exact: true })
+        .click();
+      assert.equal(await page.getByLabel("语速 · 1.3×").isDisabled(), false);
+      assert.equal(
+        await page
+          .getByRole("switch", { name: "自然聊天语气", exact: true })
+          .getAttribute("aria-checked"),
+        "true",
+      );
+      naturalMimo = true;
+      const comparisonOffset = await page.evaluate(
+        () => window.__played.length,
+      );
+      await page.getByRole("button", { name: "试听声音", exact: true }).click();
+      await until(
+        async () =>
+          (await page.evaluate(() => window.__played.length)) >
+          comparisonOffset,
+        "关闭原生模式后未能比较原设置",
+      );
+      assert.equal(await page.evaluate(() => window.__rates.at(-1)), 1.3);
+      await page
+        .getByRole("switch", { name: "模型原生输出", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "保存声音设置", exact: true })
+        .click();
+      await until(
+        async () =>
+          (await page.evaluate(() => window.mai.snapshot())).settings
+            .ttsNativeOutput,
+        "原生输出设置未保存",
+      );
+      naturalMimo = false;
     } else assert.equal(id, voices[provider].voiceId);
     if (provider === "volcengine")
       assert.equal(synth.headers["x-api-resource-id"], "seed-icl-2.0");
@@ -368,9 +425,12 @@ try {
   );
   await page.getByRole("button", { name: "停止试听", exact: true }).click();
   await new Promise((done) => setTimeout(done, 150));
-  assert.equal(
-    requests.slice(before).filter((req) => req.path.endsWith("/t2a_v2")).length,
-    1,
+  const submitted = requests
+    .slice(before)
+    .filter((req) => req.path.endsWith("/t2a_v2")).length;
+  assert.ok(
+    submitted >= 1 && submitted <= 2,
+    "停止后最多保留已提交的当前段与预合成一段，不能继续请求后文",
   );
   // 旧 ASR Key 不应随兼容合成地址的更换而被发送。
   await page.evaluate(async (origin) => {
@@ -409,6 +469,7 @@ try {
   const reloaded = await launch();
   const restored = await reloaded.evaluate(() => window.mai.snapshot());
   assert.equal(restored.clonedVoices.length, providers.length);
+  assert.equal(restored.settings.ttsNativeOutput, true);
   for (const provider of providers) {
     await reloaded.evaluate(
       (provider) => window.mai.updateSettings({ ttsProvider: provider }),
@@ -428,6 +489,9 @@ try {
         clonedVoices: providers.length,
         longTextSegments: segments.length,
         restart: true,
+        nativeOutput: true,
+        nativePlaybackRate: 1,
+        comparisonPlaybackRate: 1.3,
         errors,
       },
       null,
@@ -435,7 +499,7 @@ try {
     ),
   );
   console.log(
-    "五家在线合成、音色复刻、MiMo 预置 / 参考音色与本机语速、长文分段、停止及持久化重启验证通过",
+    "五家在线合成、音色复刻、MiMo 原生 1 倍与可选语气 / 语速对比、长文分段、停止及持久化重启验证通过",
   );
 } finally {
   if (desktop) await desktop.close().catch(() => {});

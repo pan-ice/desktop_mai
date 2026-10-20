@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, showToast } from "../api";
-import { speechSegments } from "../../shared/speech-text";
+import { replySpeechText, speechSegments } from "../../shared/speech-text";
+import { ttsProfile } from "../../shared/tts";
 import type { Settings, Snapshot } from "../../shared/types";
 
 export function useRecorder(onText: (text: string) => Promise<void> | void) {
@@ -122,8 +123,16 @@ export async function speak(
   const segments =
     dataUrl || settings.ttsEngine === "system"
       ? [text]
-      : speechSegments(text, settings.ttsProvider);
-  for (const segment of segments) {
+      : speechSegments(text, settings.ttsProvider).filter((segment) =>
+          segment.trim(),
+        );
+  const synthesize = (segment: string) =>
+    api.synthesize(segment).then(
+      (url) => ({ url, error: undefined }),
+      (error: unknown) => ({ url: null, error }),
+    );
+  let prepared: ReturnType<typeof synthesize> | undefined;
+  for (const [index, segment] of segments.entries()) {
     if (generation !== playbackGeneration) return;
     if (!dataUrl && !segment.trim()) continue;
     let complete: () => void = () => {};
@@ -140,17 +149,27 @@ export async function speak(
     };
     try {
       if (dataUrl || settings.ttsEngine === "api") {
-        const url =
-          dataUrl ||
-          (await Promise.race([
-            api.synthesize(segment),
-            ended.then(() => null),
-          ]));
+        const result = dataUrl
+          ? { url: dataUrl, error: undefined }
+          : await Promise.race([
+              prepared || synthesize(segment),
+              ended.then(() => null),
+            ]);
+        prepared = undefined;
+        if (generation !== playbackGeneration || !result) return;
+        if (result.error) throw result.error;
+        const url = result.url;
         if (generation !== playbackGeneration || !url) return;
         const audio = new Audio(url);
         currentAudio = audio;
         audio.volume = settings.speechVolume;
-        if (!dataUrl && settings.ttsProvider === "mimo")
+        if (
+          !dataUrl &&
+          settings.ttsNativeOutput === false &&
+          (settings.ttsProvider === "mimo" ||
+            (settings.ttsProvider === "bailian" &&
+              ttsProfile(settings).model.startsWith("qwen3-tts-")))
+        )
           audio.playbackRate = settings.speechRate;
         audio.onended = finish;
         audio.onerror = () => {
@@ -160,6 +179,13 @@ export async function speak(
         await api.setMood("speaking");
         if (generation !== playbackGeneration) return;
         await audio.play();
+        if (
+          !dataUrl &&
+          settings.ttsPreloadNext &&
+          generation === playbackGeneration &&
+          index + 1 < segments.length
+        )
+          prepared = synthesize(segments[index + 1]);
       } else {
         const voices = speechSynthesis.getVoices();
         const utterance = new SpeechSynthesisUtterance(segment);
@@ -215,7 +241,8 @@ export function useSpeechReplies(state: Snapshot) {
             ...voices.map((voice) => ({ text: "", dataUrl: voice.dataUrl })),
           );
         } else {
-          queue.current.push({ text: reply.text });
+          const text = replySpeechText(reply);
+          if (text.trim()) queue.current.push({ text });
         }
       }
     }

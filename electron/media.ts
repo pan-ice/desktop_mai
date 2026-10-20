@@ -1,10 +1,28 @@
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Attachment, ChatMessage } from "../shared/types";
 import { MAX_AUDIO_BYTES } from "../shared/media-limits";
 
 const mediaName = /^[0-9a-f-]{36}\.(png|jpg|gif|webp|mp3|wav|ogg)$/;
+const mediaTypes: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+};
 export async function saveAttachment(
   directory: string,
   attachment: Attachment,
@@ -43,6 +61,68 @@ export function mediaFile(directory: string, request: string): string {
   return join(directory, "media", name);
 }
 
+/** Chromium 需要文件长度和正确的范围响应才能计算时长、跳转播放。 */
+export async function mediaResponse(
+  directory: string,
+  request: Request,
+): Promise<Response> {
+  if (!["GET", "HEAD"].includes(request.method))
+    return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+  let file: string, size: number;
+  try {
+    file = mediaFile(directory, request.url);
+    const info = await stat(file);
+    if (!info.isFile()) throw new Error();
+    size = info.size;
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+  const headers = new Headers({
+    "Content-Type": mediaTypes[file.slice(file.lastIndexOf(".") + 1)],
+    "Content-Length": String(size),
+    "Accept-Ranges": "bytes",
+  });
+  let start = 0,
+    end = size - 1,
+    status = 200;
+  const range = request.method === "GET" ? request.headers.get("Range") : null;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
+    let valid = Boolean(match && (match[1] || match[2]) && size > 0);
+    if (valid && match) {
+      if (!match[1]) {
+        const suffix = Number(match[2]);
+        valid = Number.isSafeInteger(suffix) && suffix > 0;
+        start = Math.max(0, size - suffix);
+      } else {
+        start = Number(match[1]);
+        const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+        valid =
+          Number.isSafeInteger(start) &&
+          Number.isSafeInteger(requestedEnd) &&
+          start < size &&
+          requestedEnd >= start;
+        end = Math.min(requestedEnd, size - 1);
+      }
+    }
+    if (!valid) {
+      headers.set("Content-Range", `bytes */${size}`);
+      headers.set("Content-Length", "0");
+      return new Response(null, { status: 416, headers });
+    }
+    status = 206;
+    headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
+    headers.set("Content-Length", String(end - start + 1));
+  }
+  if (request.method === "HEAD" || !size)
+    return new Response(null, { status, headers });
+  const stream = createReadStream(file, { start, end, signal: request.signal });
+  return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+    status,
+    headers,
+  });
+}
+
 export async function inlineAttachment(
   directory: string,
   attachment: Attachment,
@@ -50,17 +130,7 @@ export async function inlineAttachment(
   if (!attachment.dataUrl.startsWith("mai-media:")) return attachment;
   const file = mediaFile(directory, attachment.dataUrl);
   const extension = file.slice(file.lastIndexOf(".") + 1);
-  const mime = (
-    {
-      png: "image/png",
-      jpg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-      mp3: "audio/mpeg",
-      wav: "audio/wav",
-      ogg: "audio/ogg",
-    } as Record<string, string>
-  )[extension];
+  const mime = mediaTypes[extension];
   return {
     ...attachment,
     dataUrl: `data:${mime};base64,${(await readFile(file)).toString("base64")}`,

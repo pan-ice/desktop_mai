@@ -32,7 +32,7 @@ import { adapterConfig, messageAdapterConfig, type Reply } from "./protocol";
 import { StateStore } from "./store";
 import {
   inlineAttachment,
-  mediaFile,
+  mediaResponse,
   pruneMedia,
   removeHistoryMedia,
   saveAttachment,
@@ -48,9 +48,20 @@ import {
 } from "./live2d-core";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
-import { createClonedVoice, queryClonedVoice } from "./tts";
-import { ttsProfile, ttsProviders, voiceCloneInputSchema } from "../shared/tts";
+import {
+  createClonedVoice,
+  createImportedVoice,
+  queryClonedVoice,
+} from "./tts";
+import {
+  ttsProfile,
+  ttsProviders,
+  voiceCloneInputSchema,
+  voiceImportInputSchema,
+  type ClonedVoice,
+} from "../shared/tts";
 import { CREDENTIAL_KEYS } from "../shared/types";
+import { isModelGuideUrl } from "../shared/model-guidance";
 import {
   fitPetPosition,
   PET_CHARACTER,
@@ -270,6 +281,117 @@ function ttsCredential(settings = store.state.settings) {
   return "";
 }
 let cloningVoice = false;
+let voiceSelectionEpoch = 0;
+let voiceStatusTimer: ReturnType<typeof setTimeout> | undefined;
+const voiceStatusAbort = new AbortController();
+const voiceQueries = new Map<string, Promise<ClonedVoice>>();
+const voiceStatusFailures = new Map<string, number>();
+
+function cancelVoiceAutoUse() {
+  ++voiceSelectionEpoch;
+  for (const voice of store.state.clonedVoices)
+    if (voice.autoUse) voice.autoUse = false;
+}
+
+function applyImportedVoice(voice: ClonedVoice) {
+  cancelVoiceAutoUse();
+  store.state.settings = {
+    ...store.state.settings,
+    ttsEngine: "api",
+    ttsProvider: voice.provider,
+    ttsProfiles: {
+      ...store.state.settings.ttsProfiles,
+      [voice.provider]: voice.profile,
+    },
+    voiceEnabled: store.state.credentials[ttsProviders[voice.provider].key],
+  };
+}
+
+async function refreshVoice(id: string): Promise<ClonedVoice> {
+  const existing = voiceQueries.get(id);
+  if (existing) return existing;
+  const task = (async () => {
+    const previous = store.state.clonedVoices.find((voice) => voice.id === id);
+    if (!previous) throw new Error("找不到该复刻音色");
+    const value = await queryClonedVoice(
+      previous,
+      credential(ttsProviders[previous.provider].key),
+      voiceStatusAbort.signal,
+    );
+    const index = store.state.clonedVoices.findIndex(
+      (voice) => voice.id === id,
+    );
+    const current = store.state.clonedVoices[index];
+    if (quitting || !current || current.createdAt !== previous.createdAt)
+      return current || value;
+    const voice = {
+      ...current,
+      status: value.status,
+      statusMessage: undefined,
+    };
+    store.state.clonedVoices[index] = voice;
+    voiceStatusFailures.delete(id);
+    if (voice.autoUse && voice.status === "ready") applyImportedVoice(voice);
+    if (voice.status === "failed") voice.autoUse = false;
+    await store.save();
+    broadcast();
+    return voice;
+  })();
+  voiceQueries.set(id, task);
+  try {
+    return await task;
+  } finally {
+    voiceQueries.delete(id);
+  }
+}
+
+function scheduleVoiceStatus(delay = 3000) {
+  if (
+    quitting ||
+    voiceStatusTimer ||
+    !store.state.clonedVoices.some(
+      (voice) => voice.autoUse !== undefined && voice.status === "pending",
+    )
+  )
+    return;
+  voiceStatusTimer = setTimeout(() => {
+    voiceStatusTimer = undefined;
+    void (async () => {
+      let nextDelay = 3000;
+      for (const pending of store.state.clonedVoices.filter(
+        (voice) => voice.autoUse !== undefined && voice.status === "pending",
+      )) {
+        try {
+          await refreshVoice(pending.id);
+        } catch {
+          if (quitting) return;
+          const voice = store.state.clonedVoices.find(
+            (value) => value.id === pending.id,
+          );
+          if (
+            !voice ||
+            voice.autoUse === undefined ||
+            voice.status !== "pending"
+          )
+            continue;
+          const failures = Math.min(
+            (voiceStatusFailures.get(voice.id) || 0) + 1,
+            5,
+          );
+          voiceStatusFailures.set(voice.id, failures);
+          nextDelay = Math.max(
+            nextDelay,
+            Math.min(3000 * 2 ** failures, 60000),
+          );
+          voice.statusMessage = "暂时无法查询进度，正在自动重试。";
+          await store.save();
+          broadcast();
+        }
+      }
+      scheduleVoiceStatus(nextDelay);
+    })().catch(() => scheduleVoiceStatus(30000));
+  }, delay);
+}
 function setMood(mood: Mood, resetMs?: number) {
   if (moodTimer) clearTimeout(moodTimer);
   moodTimer = null;
@@ -283,7 +405,13 @@ function trusted(sender: Electron.WebContents) {
   return [dashboard?.webContents.id, pet?.webContents.id].includes(sender.id);
 }
 function loadWindow(window: BrowserWindow, view: string) {
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isModelGuideUrl(url))
+      void shell.openExternal(url).catch(() => {
+        activity("无法打开官方计费说明，请检查系统默认浏览器。", "error");
+      });
+    return { action: "deny" };
+  });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   if (process.env.ELECTRON_RENDERER_URL)
     void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=${view}`);
@@ -405,6 +533,13 @@ async function updateSettings(patch: Partial<Settings>) {
   )
     throw new Error("所选角色不存在");
   const previous = store.state.settings;
+  if (
+    "ttsEngine" in parsed ||
+    "ttsProvider" in parsed ||
+    "ttsProfiles" in parsed ||
+    parsed.voiceEnabled === false
+  )
+    cancelVoiceAutoUse();
   if (
     parsed.screenObservationEnabled &&
     !(parsed.screenSourceId || previous.screenSourceId)
@@ -1228,19 +1363,34 @@ async function commands(
         store.directory,
       );
     }
+    case "importVoice":
     case "cloneVoice": {
       if (cloningVoice) throw new Error("已有音色正在提交复刻，请稍候");
       cloningVoice = true;
       try {
+        const importing = command === "importVoice";
+        const selectionEpoch = voiceSelectionEpoch;
         const settings = structuredClone(store.state.settings);
+        const importedInput = importing
+          ? voiceImportInputSchema.parse(args[0])
+          : undefined;
+        if (importedInput) settings.ttsProvider = importedInput.provider;
         if (store.state.clonedVoices.length >= 100)
           throw new Error("已保存 100 个复刻音色，请使用已有音色");
-        const voice = await createClonedVoice(
-          settings,
-          ttsCredential(settings),
-          voiceCloneInputSchema.parse(args[0]),
-          store.directory,
-        );
+        const voice = importedInput
+          ? await createImportedVoice(
+              settings,
+              ttsCredential(settings),
+              importedInput,
+              store.directory,
+            )
+          : await createClonedVoice(
+              settings,
+              ttsCredential(settings),
+              voiceCloneInputSchema.parse(args[0]),
+              store.directory,
+            );
+        if (importing) voice.autoUse = false;
         const previous = store.state.clonedVoices.findIndex(
           (saved) =>
             saved.provider === voice.provider &&
@@ -1252,8 +1402,14 @@ async function commands(
           voice.id = store.state.clonedVoices[previous].id;
           store.state.clonedVoices[previous] = voice;
         }
+        if (importing && selectionEpoch === voiceSelectionEpoch) {
+          cancelVoiceAutoUse();
+          if (voice.status === "ready") applyImportedVoice(voice);
+          else if (voice.status === "pending") voice.autoUse = true;
+        }
         await store.save();
         broadcast();
+        scheduleVoiceStatus();
         return voice;
       } finally {
         cloningVoice = false;
@@ -1261,19 +1417,7 @@ async function commands(
     }
     case "queryVoice": {
       const id = z.string().uuid().parse(args[0]);
-      const index = store.state.clonedVoices.findIndex(
-        (voice) => voice.id === id,
-      );
-      if (index < 0) throw new Error("找不到该复刻音色");
-      const previous = store.state.clonedVoices[index];
-      const voice = await queryClonedVoice(
-        previous,
-        credential(ttsProviders[previous.provider].key),
-      );
-      store.state.clonedVoices[index] = voice;
-      await store.save();
-      broadcast();
-      return voice;
+      return refreshVoice(id);
     }
     case "voiceConversation": {
       const active = z.boolean().parse(args[0]);
@@ -1343,6 +1487,8 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   quitting = true;
   if (scheduler) clearInterval(scheduler);
+  if (voiceStatusTimer) clearTimeout(voiceStatusTimer);
+  voiceStatusAbort.abort();
   if (moodTimer) clearTimeout(moodTimer);
   qqLogin = null;
   accountClient.close();
@@ -1410,15 +1556,9 @@ void app
         return new Response("Invalid asset", { status: 404 });
       }
     });
-    protocol.handle("mai-media", async (request) => {
-      try {
-        return await net.fetch(
-          pathToFileURL(mediaFile(store.directory, request.url)).toString(),
-        );
-      } catch {
-        return new Response("Not found", { status: 404 });
-      }
-    });
+    protocol.handle("mai-media", (request) =>
+      mediaResponse(store.directory, request),
+    );
     session.defaultSession.setPermissionRequestHandler(
       (contents, permission, callback) =>
         callback(trusted(contents) && permission === "media"),
@@ -1600,6 +1740,7 @@ void app
     createDashboard();
     createPet();
     createTray();
+    scheduleVoiceStatus();
     globalShortcut.register("CommandOrControl+Shift+M", () => {
       void updateSettings({ petVisible: true, clickThrough: false });
       dashboard?.show();

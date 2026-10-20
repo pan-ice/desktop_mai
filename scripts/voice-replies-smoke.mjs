@@ -289,6 +289,99 @@ try {
       pet.evaluate(() => window.__voiceTest.spoken.includes("纯文字仍可朗读")),
     "纯文字朗读未恢复",
   );
+  const spokenBeforeQuote = await pet.evaluate(
+    () => window.__voiceTest.spoken.length,
+  );
+  await reply("quoted-text", [
+    { type: "text", text: "[引用消息] 朋友：被引用的第一行\n被引用的第二行\n" },
+    { type: "text", text: "这是本次回复。" },
+  ]);
+  await until(
+    async () =>
+      (await pet.evaluate(() => window.__voiceTest.spoken.length)) >
+      spokenBeforeQuote,
+    "引用后的回复未朗读",
+  );
+  assert.deepEqual(
+    await pet.evaluate(
+      (offset) => window.__voiceTest.spoken.slice(offset),
+      spokenBeforeQuote,
+    ),
+    ["这是本次回复。"],
+    "朗读应只包含本次回复，跳过引用标记、发送者和多行原文",
+  );
+  await reply("quote-only", [
+    { type: "text", text: "[引用消息] 朋友：仅供引用的原文\n" },
+  ]);
+  await reply("legacy-quote", [
+    { type: "text", text: "[引用消息]\n" },
+    { type: "text", text: "只有消息编号也能只读回复。" },
+  ]);
+  await until(
+    async () =>
+      pet.evaluate(() =>
+        window.__voiceTest.spoken.includes("只有消息编号也能只读回复。"),
+      ),
+    "仅有引用的消息不应阻塞后续回复",
+  );
+  assert.deepEqual(
+    await pet.evaluate(
+      (offset) => window.__voiceTest.spoken.slice(offset),
+      spokenBeforeQuote,
+    ),
+    ["这是本次回复。", "只有消息编号也能只读回复。"],
+    "只含引用的消息应保持安静",
+  );
+
+  // 手动朗读与自动朗读共用提取规则，引用仍完整显示。
+  await page.evaluate(() => {
+    window.__manualSpeech = [];
+    speechSynthesis.cancel = () => {};
+    speechSynthesis.speak = (utterance) => {
+      window.__manualSpeech.push(utterance.text);
+      utterance.onstart?.({});
+      queueMicrotask(() => utterance.onend?.({}));
+    };
+    window.Audio = class {
+      async play() {
+        queueMicrotask(() => this.onended?.());
+      }
+      pause() {}
+    };
+  });
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("button", { name: /和麦麦聊聊/ })
+    .click();
+  const quotedRow = page
+    .locator(".message-row.assistant")
+    .filter({ hasText: "这是本次回复。" });
+  assert.ok((await quotedRow.innerText()).includes("被引用的第二行"));
+  const storedQuote = await page.evaluate(async () =>
+    (await window.mai.snapshot()).history.find(
+      (item) => item.id === "quoted-text",
+    ),
+  );
+  assert.equal(
+    storedQuote.text,
+    "[引用消息] 朋友：被引用的第一行\n被引用的第二行\n这是本次回复。",
+  );
+  await quotedRow.getByRole("button", { name: "朗读这条消息" }).click();
+  await until(
+    async () => (await page.evaluate(() => window.__manualSpeech.length)) === 1,
+    "手动朗读未开始",
+  );
+  assert.deepEqual(await page.evaluate(() => window.__manualSpeech), [
+    "这是本次回复。",
+  ]);
+  assert.equal(
+    await page
+      .locator(".message-row.assistant")
+      .filter({ hasText: "仅供引用的原文" })
+      .getByRole("button", { name: "朗读这条消息" })
+      .count(),
+    0,
+  );
   // 合成尚未响应时也要立即释放播放队列，新回复不应等旧请求超时。
   const requestedTexts = [];
   ttsService = createHttpServer(async (request, response) => {
@@ -338,6 +431,83 @@ try {
   releaseSynthesis();
   releaseSynthesis = undefined;
   await finish();
+  const quotedApiOffset = (await played()).length;
+  const requestOffset = requestedTexts.length;
+  await reply("quote-only-api", [
+    { type: "text", text: "[引用消息] 朋友：不应发送到语音接口\n" },
+  ]);
+  await reply("quoted-api", [
+    {
+      type: "text",
+      text: "[引用消息] 朋友：接口也要跳过原文\n以及第二行原文\n",
+    },
+    { type: "text", text: "接口只合成回复。" },
+  ]);
+  await until(
+    async () => (await played()).length > quotedApiOffset,
+    "引用后的 API 语音未播放",
+  );
+  assert.deepEqual(requestedTexts.slice(requestOffset), ["接口只合成回复。"]);
+  await finish();
+  await quotedRow.getByRole("button", { name: "朗读这条消息" }).click();
+  await until(
+    () => requestedTexts.length > requestOffset + 1,
+    "手动朗读的 API 请求未发出",
+  );
+  assert.deepEqual(requestedTexts.slice(requestOffset), [
+    "接口只合成回复。",
+    "这是本次回复。",
+  ]);
+  // 下一段须在当前段播放期间准备，避免每段之间重新等待模型响应。
+  const longOffset = (await played()).length;
+  const longRequestOffset = requestedTexts.length;
+  const longReply = "这是一句完整的话。".repeat(130);
+  await reply("continuous-long-tts", [{ type: "text", text: longReply }]);
+  await until(
+    async () => (await played()).length > longOffset,
+    "长回复首段未播放",
+  );
+  await until(
+    () => requestedTexts.length > longRequestOffset + 1,
+    "当前段播放期间没有准备下一段，段间会再次等待合成",
+    1500,
+  );
+  await finish();
+  await until(
+    async () => (await played()).length > longOffset + 1,
+    "预备的下一段未接续播放",
+  );
+  await finish();
+  assert.equal(requestedTexts.slice(longRequestOffset).join(""), longReply);
+  await page.evaluate(() =>
+    window.mai.updateSettings({ ttsPreloadNext: false }),
+  );
+  const serialOffset = (await played()).length;
+  const serialRequestOffset = requestedTexts.length;
+  const serialReply = "关闭预合成后按原有顺序播放。".repeat(90);
+  await reply("serial-long-tts", [{ type: "text", text: serialReply }]);
+  await until(
+    async () => (await played()).length > serialOffset,
+    "串行朗读首段未播放",
+  );
+  await pet.evaluate(
+    () =>
+      new Promise((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(done)),
+      ),
+  );
+  assert.equal(
+    requestedTexts.length,
+    serialRequestOffset + 1,
+    "关闭连续播放后不应预先提交下一段",
+  );
+  await finish();
+  await until(
+    async () => (await played()).length > serialOffset + 1,
+    "关闭预合成后下一段未继续",
+  );
+  await finish();
+  assert.equal(requestedTexts.slice(serialRequestOffset).join(""), serialReply);
   await page.evaluate(() => window.mai.updateSettings({ ttsEngine: "system" }));
   // init script 在重载前安装，确保早于 React 初始化。
   await pet.addInitScript(() => {
@@ -371,7 +541,13 @@ try {
           "专注中断全部待播音频",
           "手动打断与后续新消息恢复",
           "纯文字 TTS",
+          "自动与手动朗读仅包含回复，跳过多行引用和发送者",
+          "只有引用时不朗读，也不阻塞后续消息",
+          "原文完整展示和保存",
+          "语音接口不发送引用原文",
           "取消等待中的模型合成后新回复立即恢复",
+          "长回复当前段播放期间只预合成下一段",
+          "关闭连续播放后不预先提交后文",
           "历史补载不自动播放",
         ],
       },
@@ -380,7 +556,7 @@ try {
     ),
   );
   console.log(
-    "PASS 多段语音：同条顺序播放、跨消息排队、停止/专注/手动打断、恢复与历史补载",
+    "PASS 语音回复：多段队列、打断与恢复、自动/手动朗读跳过引用、系统语音与 API 请求正文",
   );
 } finally {
   releaseSynthesis?.();

@@ -3,17 +3,22 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   clonedVoiceSchema,
+  BAILIAN_IMPORT_MODEL,
   MIMO_REFERENCE_MAX_BYTES,
   ttsProfile,
   ttsProfileSchema,
   ttsProviders,
   voiceCloneInputSchema,
+  voiceImportAudioRules,
+  voiceImportInputSchema,
   type ClonedVoice,
   type TtsProfile,
   type TtsProvider,
   type VoiceCloneInput,
+  type VoiceImportInput,
 } from "../shared/tts";
 import type { Settings } from "../shared/types";
+import { NATURAL_SPEECH_INSTRUCTION } from "../shared/speech-delivery";
 
 const MAX_AUDIO = 25 * 1024 * 1024;
 const MAX_JSON = 2 * MAX_AUDIO + 65536;
@@ -227,6 +232,8 @@ export async function synthesizeTts(
   if (!profile.voice) throw new Error("请先选择或填写音色 ID");
   const auth = headers(provider, key);
   const signal = AbortSignal.timeout(120000);
+  const native = settings.ttsNativeOutput !== false;
+  const natural = !native && settings.ttsNaturalSpeech;
   let bytes: Buffer;
   if (provider === "openai" || provider === "siliconflow") {
     const response = await request(
@@ -234,10 +241,15 @@ export async function synthesizeTts(
       jsonBody(
         {
           model: profile.model,
-          input: text,
+          input:
+            natural &&
+            provider === "siliconflow" &&
+            profile.model.startsWith("FunAudioLLM/CosyVoice2")
+              ? `${NATURAL_SPEECH_INSTRUCTION}<|endofprompt|>${text}`
+              : text,
           voice: profile.voice,
           response_format: "mp3",
-          speed: settings.speechRate,
+          ...(!native ? { speed: settings.speechRate } : {}),
         },
         auth,
       ),
@@ -261,7 +273,12 @@ export async function synthesizeTts(
         jsonBody(
           {
             model: profile.model,
-            messages: [{ role: "assistant", content: text }],
+            messages: [
+              ...(natural
+                ? [{ role: "user", content: NATURAL_SPEECH_INSTRUCTION }]
+                : []),
+              { role: "assistant", content: text },
+            ],
             audio: { format: "wav", voice },
             stream: false,
           },
@@ -290,14 +307,20 @@ export async function synthesizeTts(
             text,
             stream: false,
             output_format: "hex",
-            language_boost: "auto",
+            ...(!native ? { language_boost: "auto" } : {}),
+            ...(natural && /^speech-2\.[68]-(hd|turbo)$/.test(profile.model)
+              ? { text_normalization_mode: "quality" }
+              : {}),
             voice_setting: {
               voice_id: profile.voice,
-              speed: settings.speechRate,
-              vol: 1,
-              pitch: 0,
+              ...(!native
+                ? { speed: settings.speechRate, vol: 1, pitch: 0 }
+                : {}),
             },
-            audio_setting: { format: "mp3", sample_rate: 32000, channel: 1 },
+            audio_setting: {
+              format: "mp3",
+              ...(!native ? { sample_rate: 32000, channel: 1 } : {}),
+            },
           },
           auth,
         ),
@@ -315,18 +338,31 @@ export async function synthesizeTts(
       throw new Error("MiniMax 返回的音频编码无效");
     bytes = Buffer.from(encoded, "hex");
   } else if (provider === "bailian") {
+    const qwen = profile.model.startsWith("qwen3-tts-");
     const data = await jsonResponse(
       await request(
-        endpoint(profile.baseUrl, "services/audio/tts/SpeechSynthesizer"),
+        endpoint(
+          profile.baseUrl,
+          qwen
+            ? "services/aigc/multimodal-generation/generation"
+            : "services/audio/tts/SpeechSynthesizer",
+        ),
         jsonBody(
           {
             model: profile.model,
             input: {
               text,
               voice: profile.voice,
-              format: "wav",
-              sample_rate: 24000,
-              rate: settings.speechRate,
+              ...(qwen
+                ? !native
+                  ? { language_type: "Auto" }
+                  : {}
+                : {
+                    format: "wav",
+                    ...(!native
+                      ? { sample_rate: 24000, rate: settings.speechRate }
+                      : {}),
+                  }),
             },
           },
           auth,
@@ -343,20 +379,38 @@ export async function synthesizeTts(
     );
   } else {
     if (!profile.resourceId) throw new Error("请填写火山语音资源 ID");
+    const preset = profile.resourceId === "seed-tts-2.0";
+    const additions = {
+      ...(natural && preset
+        ? { context_texts: [NATURAL_SPEECH_INSTRUCTION] }
+        : {}),
+      ...(!native &&
+      settings.ttsCloneFidelity &&
+      profile.resourceId === "seed-icl-2.0"
+        ? { tone_fidelity: true }
+        : {}),
+    };
     bytes = await volcAudio(
       await request(
         endpoint(profile.baseUrl, "unidirectional"),
         jsonBody(
           {
-            user: { uid: "mai-desktop" },
+            ...(!native ? { user: { uid: "mai-desktop" } } : {}),
             req_params: {
               text,
               speaker: profile.voice,
-              model: profile.model,
+              ...(!preset ? { model: profile.model } : {}),
+              ...(Object.keys(additions).length
+                ? { additions: JSON.stringify(additions) }
+                : {}),
               audio_params: {
                 format: "mp3",
-                sample_rate: 24000,
-                speech_rate: Math.round((settings.speechRate - 1) * 100),
+                ...(!native
+                  ? {
+                      sample_rate: 24000,
+                      speech_rate: Math.round((settings.speechRate - 1) * 100),
+                    }
+                  : {}),
               },
             },
           },
@@ -494,7 +548,58 @@ export async function createClonedVoice(
   const signal = AbortSignal.timeout(120000);
   let voiceId = "",
     status: ClonedVoice["status"] = "ready";
-  if (provider === "bailian") {
+  if (provider === "bailian" && profile.model.startsWith("qwen3-tts-vc-")) {
+    let reference: string;
+    if (input.audio) {
+      const { bytes, format } = cloneAudio(input, "bailian");
+      if (
+        bytes.length > MIMO_REFERENCE_MAX_BYTES ||
+        !["mp3", "wav"].includes(format)
+      )
+        throw new Error("百炼本地复刻请选择小于约 7.5 MB 的 MP3 或 WAV");
+      reference = ttsAudioUrl(bytes);
+    } else {
+      try {
+        const url = new URL(input.referenceUrl || "");
+        if (
+          !["http:", "https:"].includes(url.protocol) ||
+          url.username ||
+          url.password ||
+          url.hash
+        )
+          throw new Error();
+        reference = url.toString();
+      } catch {
+        throw new Error("请导入音色音频或填写有效的参考链接");
+      }
+    }
+    const data = await jsonResponse(
+      await request(
+        endpoint(profile.baseUrl, "services/audio/tts/customization"),
+        jsonBody(
+          {
+            model: "qwen-voice-enrollment",
+            input: {
+              action: "create",
+              target_model: profile.model,
+              preferred_name: `mai_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+              audio: { data: reference },
+              ...(input.referenceText ? { text: input.referenceText } : {}),
+            },
+          },
+          auth,
+        ),
+        signal,
+      ),
+      65536,
+    );
+    if (
+      data.code ||
+      (data.output?.target_model && data.output.target_model !== profile.model)
+    )
+      throw new Error("百炼音色创建失败或目标模型不匹配");
+    voiceId = data.output?.voice;
+  } else if (provider === "bailian") {
     let url: URL;
     try {
       url = new URL(input.referenceUrl || "");
@@ -638,7 +743,13 @@ export async function createClonedVoice(
 export async function queryClonedVoice(
   voice: ClonedVoice,
   key: string,
+  signal = AbortSignal.timeout(30000),
 ): Promise<ClonedVoice> {
+  if (
+    voice.provider === "bailian" &&
+    voice.profile.model.startsWith("qwen3-tts-vc-")
+  )
+    return voice;
   if (!["bailian", "volcengine"].includes(voice.provider)) return voice;
   const auth = headers(voice.provider, key);
   const data = await jsonResponse(
@@ -658,7 +769,7 @@ export async function queryClonedVoice(
           : volcVoice(voice.voiceId),
         auth,
       ),
-      AbortSignal.timeout(30000),
+      AbortSignal.any([signal, AbortSignal.timeout(30000)]),
     ),
     65536,
   );
@@ -678,4 +789,72 @@ export async function queryClonedVoice(
     status:
       status === "OK" ? "ready" : status === "DEPLOYING" ? "pending" : "failed",
   };
+}
+
+// 简单导入只需要服务商与音频；各家的额外步骤在这里完成，不改动录音转写设置。
+export async function createImportedVoice(
+  settings: Settings,
+  key: string,
+  input: VoiceImportInput,
+  dataDirectory: string,
+): Promise<ClonedVoice> {
+  input = voiceImportInputSchema.parse(input);
+  const { provider, audio } = input;
+  const rules = voiceImportAudioRules(provider);
+  const format = audio.name.toLowerCase().split(".").at(-1) || "";
+  if (!rules.formats.includes(format))
+    throw new Error("当前服务不支持此参考音频格式");
+  if (!audio.data.byteLength || audio.data.byteLength > rules.maxBytes)
+    throw new Error(`音频不能为空且需小于 ${rules.maxBytes / 1_000_000} MB`);
+  const selected = structuredClone(settings);
+  selected.ttsProvider = provider;
+  const clone: VoiceCloneInput = {
+    name:
+      audio.name
+        .replace(/\.[^.]+$/, "")
+        .trim()
+        .slice(0, 60) || "我的音色",
+    audio,
+    referenceText: input.referenceText,
+    voiceId: input.voiceId,
+  };
+  if (provider === "siliconflow" && !clone.referenceText?.trim()) {
+    const { bytes, mime } = cloneAudio(clone, provider);
+    const form = new FormData();
+    form.set(
+      "file",
+      new Blob([new Uint8Array(bytes)], { type: mime }),
+      `reference.${format}`,
+    );
+    form.set("model", "FunAudioLLM/SenseVoiceSmall");
+    const data = await jsonResponse(
+      await request(
+        endpoint(ttsProfile(selected).baseUrl, "audio/transcriptions"),
+        { method: "POST", headers: headers(provider, key), body: form },
+        AbortSignal.timeout(60000),
+      ),
+      65536,
+    );
+    if (
+      typeof data.text !== "string" ||
+      !data.text.trim() ||
+      data.text.trim().length > 4000
+    )
+      throw new Error(
+        "未能识别参考音频，请使用清晰的说话录音，或在补充选项填写原文后重试",
+      );
+    clone.referenceText = data.text.trim();
+  }
+  if (provider === "volcengine" && !clone.voiceId)
+    clone.voiceId = `Mai${randomUUID().replace(/-/g, "")}`;
+  if (provider === "bailian") {
+    const profile = ttsProfile(selected);
+    selected.ttsProfiles.bailian = {
+      ...profile,
+      model: /^qwen3-tts-vc-(?!realtime)/.test(profile.model)
+        ? profile.model
+        : BAILIAN_IMPORT_MODEL,
+    };
+  }
+  return createClonedVoice(selected, key, clone, dataDirectory);
 }

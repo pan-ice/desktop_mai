@@ -60,6 +60,7 @@ const api: DesktopApi = {
   captureScreen: (id) => invoke("captureScreen", id),
   transcribe: (data, mime) => invoke("transcribe", data, mime),
   synthesize: (text) => invoke("synthesize", text),
+  importVoice: (audio) => invoke("importVoice", audio),
   cloneVoice: (input) => invoke("cloneVoice", input),
   queryVoice: (id) => invoke("queryVoice", id),
   setMood: (mood) => invoke("setMood", mood),

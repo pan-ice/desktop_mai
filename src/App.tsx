@@ -20,6 +20,7 @@ import { api, perform, useSnapshot } from "./api";
 import { Avatar } from "./components/Avatar";
 import { Panel, Status, Toasts } from "./components/ui";
 import { ChatPage } from "./pages/ChatPage";
+import { ChatAudioProvider, ChatAudioDock } from "./components/ChatAudio";
 import { ModelsPage } from "./pages/ModelsPage";
 import { SensesPage } from "./pages/SensesPage";
 import { CorePage } from "./pages/CorePage";
@@ -42,154 +43,157 @@ export function App() {
   useEffect(() => api.onNavigate(setPage), []);
   const selected = navigation.find((item) => item.id === page)!;
   return (
-    <div
-      className={`app-shell ${state.settings.reducedMotion ? "reduce-motion" : ""}`}
-    >
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="#home"
-          onClick={(event) => {
-            event.preventDefault();
-            setPage("home");
-          }}
-          aria-label="Mai 首页"
-        >
-          <span className="brand-mark">
-            <PawPrint size={25} strokeWidth={1.6} />
-          </span>
-          <span>
-            mai<span className="brand-dot">.</span>
-            <small>你的桌面伙伴</small>
-          </span>
-        </a>
-        <div className="sidebar-caption">一小片属于你们的空间</div>
-        <nav aria-label="主导航">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${page === item.id ? "selected" : ""}`}
-              onClick={() => setPage(item.id)}
-              aria-current={page === item.id ? "page" : undefined}
-            >
-              <item.icon size={19} strokeWidth={1.65} />
-              <span>{item.name}</span>
-              {page === item.id && <i />}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-note">
-          <span className="note-doodle">
-            <Sparkles size={21} />
-          </span>
-          <p>
-            不用很特别的事，
-            <br />
-            在一起就很好。
-          </p>
-          <span className="note-line" />
-        </div>
-        <button className="sidebar-core" onClick={() => setPage("core")}>
-          <div className="core-icon">
-            <Plug size={19} />
+    <ChatAudioProvider state={state}>
+      <div
+        className={`app-shell ${state.settings.reducedMotion ? "reduce-motion" : ""}`}
+      >
+        <aside className="sidebar">
+          <a
+            className="brand"
+            href="#home"
+            onClick={(event) => {
+              event.preventDefault();
+              setPage("home");
+            }}
+            aria-label="Mai 首页"
+          >
+            <span className="brand-mark">
+              <PawPrint size={25} strokeWidth={1.6} />
+            </span>
+            <span>
+              mai<span className="brand-dot">.</span>
+              <small>你的桌面伙伴</small>
+            </span>
+          </a>
+          <div className="sidebar-caption">一小片属于你们的空间</div>
+          <nav aria-label="主导航">
+            {navigation.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item ${page === item.id ? "selected" : ""}`}
+                onClick={() => setPage(item.id)}
+                aria-current={page === item.id ? "page" : undefined}
+              >
+                <item.icon size={19} strokeWidth={1.65} />
+                <span>{item.name}</span>
+                {page === item.id && <i />}
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-note">
+            <span className="note-doodle">
+              <Sparkles size={21} />
+            </span>
+            <p>
+              不用很特别的事，
+              <br />
+              在一起就很好。
+            </p>
+            <span className="note-line" />
           </div>
-          <span>
-            <strong>MaiBot 内核</strong>
-            <small>
-              {state.connection.phase === "connected"
-                ? "已连接 · 记忆持续生长中"
-                : "等待你的麦麦上线"}
-            </small>
-          </span>
-          <span
-            className={`tiny-light ${state.connection.phase === "connected" ? "green" : ""}`}
-          />
-        </button>
-        <div className="sidebar-footer">
-          <span className="tiny-light green" /> 本地陪伴，安心留存{" "}
-          <span>v{state.version}</span>
-        </div>
-      </aside>
-      <div className="workspace">
-        <header className="topbar">
-          <div className="breadcrumb">
-            陪伴空间
-            <ChevronRight size={13} />
-            <strong>{selected.name}</strong>
+          <button className="sidebar-core" onClick={() => setPage("core")}>
+            <div className="core-icon">
+              <Plug size={19} />
+            </div>
+            <span>
+              <strong>MaiBot 内核</strong>
+              <small>
+                {state.connection.phase === "connected"
+                  ? "已连接 · 记忆持续生长中"
+                  : "等待你的麦麦上线"}
+              </small>
+            </span>
+            <span
+              className={`tiny-light ${state.connection.phase === "connected" ? "green" : ""}`}
+            />
+          </button>
+          <div className="sidebar-footer">
+            <span className="tiny-light green" /> 本地陪伴，安心留存{" "}
+            <span>v{state.version}</span>
           </div>
-          <div className="topbar-actions">
-            <span className="local-tag">LOCAL COMPANION</span>
-            <button
-              className="text-button summon"
-              onClick={() => {
-                void perform(
-                  () => api.showPet(),
-                  "桌宠已召回；Ctrl + Shift + M 也可以找到它",
-                );
-              }}
-            >
-              <PawPrint size={16} />
-              召回桌宠
-            </button>
-            <button
-              className={`icon-button ${logs ? "active" : ""}`}
-              aria-label="运行动态"
-              title="运行动态"
-              onClick={() => setLogs(!logs)}
-            >
-              <Bell size={18} />
-              {state.activity.some((item) => item.level === "error") && (
-                <i className="notification-dot" />
+        </aside>
+        <div className="workspace">
+          <header className="topbar">
+            <div className="breadcrumb">
+              陪伴空间
+              <ChevronRight size={13} />
+              <strong>{selected.name}</strong>
+            </div>
+            <div className="topbar-actions">
+              <span className="local-tag">LOCAL COMPANION</span>
+              <button
+                className="text-button summon"
+                onClick={() => {
+                  void perform(
+                    () => api.showPet(),
+                    "桌宠已召回；Ctrl + Shift + M 也可以找到它",
+                  );
+                }}
+              >
+                <PawPrint size={16} />
+                召回桌宠
+              </button>
+              <button
+                className={`icon-button ${logs ? "active" : ""}`}
+                aria-label="运行动态"
+                title="运行动态"
+                onClick={() => setLogs(!logs)}
+              >
+                <Bell size={18} />
+                {state.activity.some((item) => item.level === "error") && (
+                  <i className="notification-dot" />
+                )}
+              </button>
+              <button
+                className="user-avatar"
+                title="偏好设置"
+                aria-label="打开偏好设置"
+                onClick={() => setPage("settings")}
+              >
+                {state.settings.userName.slice(0, 1)}
+              </button>
+            </div>
+          </header>
+          {logs && (
+            <div className="activity-popover">
+              <h3>最近的动态</h3>
+              {state.activity.length ? (
+                state.activity.slice(0, 8).map((item) => (
+                  <div key={item.id} className={item.level}>
+                    <time>
+                      {new Date(item.timestamp).toLocaleTimeString("zh-CN", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                    <span>{item.text}</span>
+                  </div>
+                ))
+              ) : (
+                <p>还没有运行动态。连接 MaiBot 后会在这里显示。</p>
               )}
-            </button>
-            <button
-              className="user-avatar"
-              title="偏好设置"
-              aria-label="打开偏好设置"
-              onClick={() => setPage("settings")}
-            >
-              {state.settings.userName.slice(0, 1)}
-            </button>
-          </div>
-        </header>
-        {logs && (
-          <div className="activity-popover">
-            <h3>最近的动态</h3>
-            {state.activity.length ? (
-              state.activity.slice(0, 8).map((item) => (
-                <div key={item.id} className={item.level}>
-                  <time>
-                    {new Date(item.timestamp).toLocaleTimeString("zh-CN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </time>
-                  <span>{item.text}</span>
-                </div>
-              ))
-            ) : (
-              <p>还没有运行动态。连接 MaiBot 后会在这里显示。</p>
-            )}
-          </div>
-        )}
-        <main className={`main-content page-${page}`}>
-          {page === "home" && <HomePage state={state} navigate={setPage} />}
-          {page === "chat" && <ChatPage state={state} navigate={setPage} />}
-          {page === "models" && <ModelsPage state={state} />}
-          {page === "senses" && <SensesPage state={state} />}
-          {page === "core" && <CorePage state={state} />}
-          {page === "settings" && <SettingsPage state={state} />}
-        </main>
-        <footer className="workspace-footer">
-          <span>MAI DESKTOP COMPANION</span>
-          <span>
-            让陪伴，发生在每个日常里。
-            <PawPrint size={12} />
-          </span>
-        </footer>
+            </div>
+          )}
+          <main className={`main-content page-${page}`}>
+            {page === "home" && <HomePage state={state} navigate={setPage} />}
+            {page === "chat" && <ChatPage state={state} navigate={setPage} />}
+            {page === "models" && <ModelsPage state={state} />}
+            {page === "senses" && <SensesPage state={state} />}
+            {page === "core" && <CorePage state={state} />}
+            {page === "settings" && <SettingsPage state={state} />}
+          </main>
+          <ChatAudioDock visible={page !== "chat"} />
+          <footer className="workspace-footer">
+            <span>MAI DESKTOP COMPANION</span>
+            <span>
+              让陪伴，发生在每个日常里。
+              <PawPrint size={12} />
+            </span>
+          </footer>
+        </div>
+        <Toasts />
       </div>
-      <Toasts />
-    </div>
+    </ChatAudioProvider>
   );
 }
 

@@ -26,6 +26,11 @@ export default defineConfig({
     root: ".",
     plugins: [developmentCsp(), react()],
     build: { rollupOptions: { input: resolve("index.html") } },
-    server: { host: "127.0.0.1", port: 5173, strictPort: false },
+    server: {
+      host: "127.0.0.1",
+      port: 5173,
+      strictPort: false,
+      watch: { ignored: ["**/.cache/**"] },
+    },
   },
 });

@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { LoaderCircle, Square, Volume2 } from "lucide-react";
 import { api, perform, showToast } from "../api";
 import { speak, stopSpeech } from "../hooks/useVoice";
-import { Field, Panel, SettingToggle } from "./ui";
+import { Field, Panel, SettingToggle, Toggle } from "./ui";
+import { speechDeliveryHint } from "../../shared/speech-delivery";
+import { VoiceImport } from "./VoiceImport";
+import { VoiceServiceGuidance } from "./ModelGuidance";
 import {
   TTS_PROVIDERS,
   MIMO_REFERENCE_MAX_BYTES,
@@ -39,6 +42,8 @@ export function TtsSettings({ state }: { state: Snapshot }) {
   }, [provider]);
   const spec = ttsProviders[provider];
   const profile = ttsProfile(draft);
+  const nativeOutput =
+    draft.ttsEngine === "api" && draft.ttsNativeOutput !== false;
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
   const changeProfile = (patch: Partial<TtsProfile>) =>
@@ -72,6 +77,10 @@ export function TtsSettings({ state }: { state: Snapshot }) {
     await api.updateSettings({
       ttsEngine: draft.ttsEngine,
       ttsProvider: provider,
+      ttsNativeOutput: draft.ttsNativeOutput,
+      ttsNaturalSpeech: draft.ttsNaturalSpeech,
+      ttsPreloadNext: draft.ttsPreloadNext,
+      ttsCloneFidelity: draft.ttsCloneFidelity,
       ttsProfiles: { ...draft.ttsProfiles, [provider]: profile },
       systemVoice: draft.systemVoice,
       speechRate: draft.speechRate,
@@ -119,9 +128,10 @@ export function TtsSettings({ state }: { state: Snapshot }) {
   return (
     <Panel
       title="让麦麦的声音陪着你"
-      subtitle="用模型将文字回复变成声音，也可以复刻自己的音色。"
+      subtitle="导入喜欢的声音，让之后的回复用这个声音朗读。"
       action={<Volume2 size={19} className="muted" />}
     >
+      <VoiceImport state={state} busy={busy} onBusyChange={setBusy} />
       <SettingToggle
         state={state}
         name="voiceEnabled"
@@ -135,212 +145,270 @@ export function TtsSettings({ state }: { state: Snapshot }) {
         }}
       >
         <fieldset disabled={busy} className="tts-fields">
-          <div className="form-grid">
-            <Field label="朗读方式">
-              <select
-                value={draft.ttsEngine}
-                onChange={(event) =>
-                  change(
-                    "ttsEngine",
-                    event.target.value as Settings["ttsEngine"],
-                  )
-                }
-              >
-                <option value="system">系统语音 · 无需 API</option>
-                <option value="api">模型语音 · 在线服务</option>
-              </select>
-            </Field>
-            {draft.ttsEngine === "system" ? (
-              <Field label="系统声音">
-                <select
-                  value={draft.systemVoice}
-                  onChange={(event) =>
-                    change("systemVoice", event.target.value)
-                  }
-                >
-                  <option value="">自动选择中文声音</option>
-                  {voices.map((voice) => (
-                    <option key={voice.voiceURI} value={voice.voiceURI}>
-                      {voice.name} · {voice.lang}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            ) : (
-              <Field label="语音服务商">
-                <select
-                  value={provider}
-                  onChange={(event) =>
-                    change("ttsProvider", event.target.value as TtsProvider)
-                  }
-                >
-                  {TTS_PROVIDERS.map((value) => (
-                    <option key={value} value={value}>
-                      {ttsProviders[value].name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-          </div>
           {draft.ttsEngine === "api" && (
-            <>
-              <Field
-                label="合成服务地址"
-                hint={
-                  provider === "bailian"
-                    ? "可填写业务空间专属地址，例如 https://你的空间.cn-beijing.maas.aliyuncs.com/api/v1。"
-                    : "填写 API 根地址，保留 /v1 或 /api/v3/tts 等路径。"
-                }
-              >
-                <input
-                  type="url"
-                  required
-                  value={profile.baseUrl}
+            <Toggle
+              label="模型原生输出"
+              checked={draft.ttsNativeOutput !== false}
+              hint="只传正文、音色和接口所需参数；不添加语气指令、语速、音高、文本归一化或还原模式，音频按原速播放。"
+              onChange={(value) => change("ttsNativeOutput", value)}
+            />
+          )}
+          {draft.ttsEngine === "api" && draft.ttsNativeOutput === false && (
+            <Toggle
+              label="自然聊天语气"
+              checked={draft.ttsNaturalSpeech}
+              hint={speechDeliveryHint(draft)}
+              onChange={(value) => change("ttsNaturalSpeech", value)}
+            />
+          )}
+          <Toggle
+            label="长回复连续播放"
+            checked={draft.ttsPreloadNext}
+            hint="播放当前段时预先合成下一段，减少段间等待。停止前已提交的一段仍可能计费。"
+            onChange={(value) => change("ttsPreloadNext", value)}
+          />
+          {draft.ttsEngine === "api" &&
+            draft.ttsNativeOutput === false &&
+            draft.ttsProvider === "volcengine" &&
+            profile.resourceId === "seed-icl-2.0" && (
+              <Toggle
+                label="火山复刻还原模式"
+                checked={draft.ttsCloneFidelity}
+                hint="尽量保留参考音色和说话风格，仅适合参考录音与朗读正文使用同一语种；跨语种请关闭。"
+                onChange={(value) => change("ttsCloneFidelity", value)}
+              />
+            )}
+          <details className="tts-advanced">
+            <summary>高级声音设置</summary>
+            <div className="form-grid">
+              <Field label="朗读方式">
+                <select
+                  value={draft.ttsEngine}
                   onChange={(event) =>
-                    changeProfile({ baseUrl: event.target.value })
+                    change(
+                      "ttsEngine",
+                      event.target.value as Settings["ttsEngine"],
+                    )
                   }
-                />
+                >
+                  <option value="system">系统语音 · 无需 API</option>
+                  <option value="api">模型语音 · 在线服务</option>
+                </select>
               </Field>
-              <Field
-                label="合成 API Key"
-                hint={
-                  state.credentials[spec.key]
-                    ? "此服务商的 Key 已加密保存，留空继续使用。"
-                    : "每家服务商单独保存 Key，与录音转写分开。"
-                }
-              >
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={keys[provider] || ""}
-                  placeholder={
-                    state.credentials[spec.key]
-                      ? "已保存 · 输入可替换"
-                      : "输入当前服务商 API Key"
-                  }
-                  onChange={(event) =>
-                    setKeys((current) => ({
-                      ...current,
-                      [provider]: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <div className="form-grid">
-                <Field label="语音合成模型">
-                  {provider === "mimo" ? (
-                    <select
-                      value={profile.model}
-                      onChange={(event) =>
-                        changeProfile({
-                          model: event.target.value,
-                          voice:
-                            event.target.value === "mimo-v2.5-tts"
-                              ? "mimo_default"
-                              : state.clonedVoices.find(
-                                  (voice) => voice.provider === "mimo",
-                                )?.voiceId || "",
-                        })
-                      }
-                    >
-                      <option value="mimo-v2.5-tts">
-                        MiMo V2.5 · 预置音色
+              {draft.ttsEngine === "system" ? (
+                <Field label="系统声音">
+                  <select
+                    value={draft.systemVoice}
+                    onChange={(event) =>
+                      change("systemVoice", event.target.value)
+                    }
+                  >
+                    <option value="">自动选择中文声音</option>
+                    {voices.map((voice) => (
+                      <option key={voice.voiceURI} value={voice.voiceURI}>
+                        {voice.name} · {voice.lang}
                       </option>
-                      <option value="mimo-v2.5-tts-voiceclone">
-                        MiMo V2.5 · 音色复刻
+                    ))}
+                  </select>
+                </Field>
+              ) : (
+                <Field label="语音服务商">
+                  <select
+                    value={provider}
+                    onChange={(event) =>
+                      change("ttsProvider", event.target.value as TtsProvider)
+                    }
+                  >
+                    {TTS_PROVIDERS.map((value) => (
+                      <option key={value} value={value}>
+                        {ttsProviders[value].name}
                       </option>
-                    </select>
-                  ) : (
-                    <input
-                      required
-                      value={profile.model}
-                      onChange={(event) =>
-                        changeProfile({ model: event.target.value })
-                      }
-                    />
-                  )}
+                    ))}
+                  </select>
                 </Field>
-                <Field label={provider === "mimo" ? "朗读音色" : "音色 ID"}>
-                  {provider === "mimo" ? (
-                    <select
-                      required
-                      value={profile.voice}
-                      onChange={(event) =>
-                        changeProfile({ voice: event.target.value })
-                      }
-                    >
-                      {profile.model === "mimo-v2.5-tts-voiceclone" ? (
-                        <>
-                          <option value="">请先在下方保存参考音色</option>
-                          {state.clonedVoices
-                            .filter((voice) => voice.provider === "mimo")
-                            .map((voice) => (
-                              <option key={voice.id} value={voice.voiceId}>
-                                {voice.name}
-                              </option>
-                            ))}
-                        </>
-                      ) : (
-                        [
-                          "mimo_default",
-                          "冰糖",
-                          "茉莉",
-                          "苏打",
-                          "白桦",
-                          "Mia",
-                          "Chloe",
-                          "Milo",
-                          "Dean",
-                        ].map((voice) => (
-                          <option key={voice} value={voice}>
-                            {voice === "mimo_default" ? "MiMo 默认" : voice}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  ) : (
-                    <input
-                      value={profile.voice}
-                      onChange={(event) =>
-                        changeProfile({ voice: event.target.value })
-                      }
-                      placeholder="系统音色或复刻后的音色 ID"
-                    />
-                  )}
-                </Field>
-              </div>
-              {provider === "volcengine" && (
+              )}
+            </div>
+            {draft.ttsEngine === "system" ? (
+              <p className="model-guide-note">
+                使用系统提供的声音朗读，桌宠不调用云端合成接口，也不消耗本页语音服务的
+                API 额度。音色导入使用在线模型，准备完成后会切换为在线朗读。
+              </p>
+            ) : (
+              <VoiceServiceGuidance provider={provider} />
+            )}
+            {draft.ttsEngine === "api" && (
+              <>
                 <Field
-                  label="语音资源 ID"
-                  hint="系统音色通常为 seed-tts-2.0；复刻 2.0 音色使用 seed-icl-2.0。"
+                  label="合成服务地址"
+                  hint={
+                    provider === "bailian"
+                      ? "可填写业务空间专属地址，例如 https://你的空间.cn-beijing.maas.aliyuncs.com/api/v1。"
+                      : "填写 API 根地址，保留 /v1 或 /api/v3/tts 等路径。"
+                  }
                 >
                   <input
+                    type="url"
                     required
-                    value={profile.resourceId}
+                    value={profile.baseUrl}
                     onChange={(event) =>
-                      changeProfile({ resourceId: event.target.value })
+                      changeProfile({ baseUrl: event.target.value })
                     }
                   />
                 </Field>
-              )}
-            </>
-          )}
+                <Field
+                  label="合成 API Key"
+                  hint={
+                    state.credentials[spec.key]
+                      ? "此服务商的 Key 已加密保存，留空继续使用。"
+                      : "每家服务商单独保存 Key，与录音转写分开。"
+                  }
+                >
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={keys[provider] || ""}
+                    placeholder={
+                      state.credentials[spec.key]
+                        ? "已保存 · 输入可替换"
+                        : "输入当前服务商 API Key"
+                    }
+                    onChange={(event) =>
+                      setKeys((current) => ({
+                        ...current,
+                        [provider]: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <div className="form-grid">
+                  <Field label="语音合成模型">
+                    {provider === "mimo" ? (
+                      <select
+                        value={profile.model}
+                        onChange={(event) =>
+                          changeProfile({
+                            model: event.target.value,
+                            voice:
+                              event.target.value === "mimo-v2.5-tts"
+                                ? "mimo_default"
+                                : state.clonedVoices.find(
+                                    (voice) => voice.provider === "mimo",
+                                  )?.voiceId || "",
+                          })
+                        }
+                      >
+                        <option value="mimo-v2.5-tts">
+                          MiMo V2.5 · 预置音色
+                        </option>
+                        <option value="mimo-v2.5-tts-voiceclone">
+                          MiMo V2.5 · 音色复刻
+                        </option>
+                      </select>
+                    ) : (
+                      <input
+                        required
+                        value={profile.model}
+                        onChange={(event) =>
+                          changeProfile({ model: event.target.value })
+                        }
+                      />
+                    )}
+                  </Field>
+                  <Field label={provider === "mimo" ? "朗读音色" : "音色 ID"}>
+                    {provider === "mimo" ? (
+                      <select
+                        required
+                        value={profile.voice}
+                        onChange={(event) =>
+                          changeProfile({ voice: event.target.value })
+                        }
+                      >
+                        {profile.model === "mimo-v2.5-tts-voiceclone" ? (
+                          <>
+                            <option value="">请先在下方保存参考音色</option>
+                            {state.clonedVoices
+                              .filter((voice) => voice.provider === "mimo")
+                              .map((voice) => (
+                                <option key={voice.id} value={voice.voiceId}>
+                                  {voice.name}
+                                </option>
+                              ))}
+                          </>
+                        ) : (
+                          [
+                            "mimo_default",
+                            "冰糖",
+                            "茉莉",
+                            "苏打",
+                            "白桦",
+                            "Mia",
+                            "Chloe",
+                            "Milo",
+                            "Dean",
+                          ].map((voice) => (
+                            <option key={voice} value={voice}>
+                              {voice === "mimo_default" ? "MiMo 默认" : voice}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    ) : (
+                      <input
+                        value={profile.voice}
+                        onChange={(event) =>
+                          changeProfile({ voice: event.target.value })
+                        }
+                        placeholder="系统音色或复刻后的音色 ID"
+                      />
+                    )}
+                  </Field>
+                </div>
+                {provider === "volcengine" && (
+                  <Field
+                    label="语音资源 ID"
+                    hint="系统音色通常为 seed-tts-2.0；复刻 2.0 音色使用 seed-icl-2.0。"
+                  >
+                    <input
+                      required
+                      value={profile.resourceId}
+                      onChange={(event) =>
+                        changeProfile({ resourceId: event.target.value })
+                      }
+                    />
+                  </Field>
+                )}
+              </>
+            )}
+            {draft.ttsEngine === "api" && state.credentials[spec.key] && (
+              <button
+                type="button"
+                className="text-button small muted"
+                onClick={() =>
+                  void perform(
+                    () => api.setCredential(spec.key, ""),
+                    "已清除当前服务商 Key",
+                  )
+                }
+              >
+                清除合成 Key
+              </button>
+            )}
+          </details>
           <div className="form-grid">
             <Field
-              label={`语速 · ${draft.speechRate.toFixed(1)}×`}
-              hint={
-                draft.ttsEngine === "api" && provider === "mimo"
-                  ? "MiMo 在本机调整播放语速。"
-                  : undefined
+              label={
+                nativeOutput
+                  ? "语速 · 模型原速"
+                  : `语速 · ${draft.speechRate.toFixed(1)}×`
               }
             >
               <input
                 type="range"
+                disabled={nativeOutput}
                 min="0.5"
                 max="2"
                 step="0.1"
-                value={draft.speechRate}
+                value={nativeOutput ? 1 : draft.speechRate}
                 onChange={(event) =>
                   change("speechRate", Number(event.target.value))
                 }
@@ -367,6 +435,11 @@ export function TtsSettings({ state }: { state: Snapshot }) {
               onChange={(event) => setTestText(event.target.value)}
             />
           </Field>
+          <p className="model-guide-note">
+            {draft.ttsEngine === "system"
+              ? "当前试听使用系统语音，不调用在线合成服务。"
+              : "每点一次试听都会请求在线合成；长回复会分段请求。复刻音色的首次试听还可能触发音色或槽位费。"}
+          </p>
           <div className="form-actions">
             <button
               type="button"
@@ -394,25 +467,11 @@ export function TtsSettings({ state }: { state: Snapshot }) {
               保存声音设置
             </button>
           </div>
-          {draft.ttsEngine === "api" && state.credentials[spec.key] && (
-            <button
-              type="button"
-              className="text-button small muted"
-              onClick={() =>
-                void perform(
-                  () => api.setCredential(spec.key, ""),
-                  "已清除当前服务商 Key",
-                )
-              }
-            >
-              清除合成 Key
-            </button>
-          )}
         </fieldset>
       </form>
       {draft.ttsEngine === "api" && spec.reference && (
         <details className="voice-clone-options" key={provider}>
-          <summary>音色复刻</summary>
+          <summary>更多音色复刻设置</summary>
           <p className="helper-text">{spec.cloneHint}</p>
           {provider === "volcengine" && (
             <p className="helper-text">
@@ -534,69 +593,68 @@ export function TtsSettings({ state }: { state: Snapshot }) {
               </button>
             </fieldset>
           </form>
-        </details>
-      )}
-      {draft.ttsEngine === "api" &&
-        state.clonedVoices.some((voice) => voice.provider === provider) && (
-          <div className="cloned-voices">
-            <div className="subsection-label">已保存音色</div>
-            {state.clonedVoices
-              .filter((voice) => voice.provider === provider)
-              .map((voice) => (
-                <div key={voice.id} className="cloned-voice">
-                  <div>
-                    <strong>{voice.name}</strong>
-                    <small>
-                      {voice.status === "ready"
-                        ? provider === "mimo"
-                          ? "本机参考音色"
-                          : "可使用"
-                        : voice.status === "pending"
-                          ? "审核 / 训练中"
-                          : "复刻未通过"}{" "}
-                      · {voice.profile.model}
-                    </small>
-                  </div>
-                  <div className="form-actions">
-                    {["bailian", "volcengine"].includes(provider) && (
+          {state.clonedVoices.some((voice) => voice.provider === provider) && (
+            <div className="cloned-voices">
+              <div className="subsection-label">已保存音色</div>
+              {state.clonedVoices
+                .filter((voice) => voice.provider === provider)
+                .map((voice) => (
+                  <div key={voice.id} className="cloned-voice">
+                    <div>
+                      <strong>{voice.name}</strong>
+                      <small>
+                        {voice.status === "ready"
+                          ? provider === "mimo"
+                            ? "本机参考音色"
+                            : "可使用"
+                          : voice.status === "pending"
+                            ? "审核 / 训练中"
+                            : "复刻未通过"}{" "}
+                        · {voice.profile.model}
+                      </small>
+                    </div>
+                    <div className="form-actions">
+                      {["bailian", "volcengine"].includes(provider) && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() =>
+                            void perform(async () => {
+                              const value = await api.queryVoice(voice.id);
+                              showToast(
+                                value.status === "ready"
+                                  ? "音色已就绪，可以使用"
+                                  : value.status === "pending"
+                                    ? "音色仍在处理中"
+                                    : "音色未通过",
+                              );
+                            })
+                          }
+                        >
+                          查询状态
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="text-button"
-                        disabled={busy}
+                        className="button secondary"
+                        disabled={busy || voice.status !== "ready"}
                         onClick={() =>
-                          void perform(async () => {
-                            const value = await api.queryVoice(voice.id);
-                            showToast(
-                              value.status === "ready"
-                                ? "音色已就绪，可以使用"
-                                : value.status === "pending"
-                                  ? "音色仍在处理中"
-                                  : "音色未通过",
-                            );
-                          })
+                          void perform(
+                            () => useVoice(voice),
+                            "已切换到此复刻音色",
+                          )
                         }
                       >
-                        查询状态
+                        使用音色
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="button secondary"
-                      disabled={busy || voice.status !== "ready"}
-                      onClick={() =>
-                        void perform(
-                          () => useVoice(voice),
-                          "已切换到此复刻音色",
-                        )
-                      }
-                    >
-                      使用音色
-                    </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-          </div>
-        )}
+                ))}
+            </div>
+          )}
+        </details>
+      )}
     </Panel>
   );
 }

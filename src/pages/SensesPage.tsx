@@ -17,6 +17,8 @@ import { ScreenPicker } from "../components/ScreenPicker";
 import { CameraShare } from "../components/CameraShare";
 import { useRecorder } from "../hooks/useVoice";
 import { TtsSettings } from "../components/TtsSettings";
+import { ModelGuidance } from "../components/ModelGuidance";
+import { modelGuideLinks } from "../../shared/model-guidance";
 import type { Settings, Snapshot } from "../../shared/types";
 
 export function useSettingsDraft(settings: Settings) {
@@ -67,6 +69,7 @@ export function SensesPage({ state }: { state: Snapshot }) {
           多一点默契
         </span>
       </div>
+      <ModelGuidance />
       <div className="settings-columns">
         <div className="settings-stack">
           <TtsSettings state={state} />
@@ -75,6 +78,11 @@ export function SensesPage({ state }: { state: Snapshot }) {
             subtitle="把你的声音转为文字后交给 MaiBot，与文字朗读分开配置。"
             action={<Mic size={19} className="muted" />}
           >
+            <p className="model-guide-note">
+              录音会发往下方服务地址，模型将语音转为文字。云端通常按音频时长或
+              Token
+              收费；此处配置与回复朗读分别结算。自建本地服务的算力与托管成本由部署方承担。
+            </p>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -141,6 +149,17 @@ export function SensesPage({ state }: { state: Snapshot }) {
                 </button>
               )}
             </form>
+            <p className="model-guide-note">
+              按量估算：音频分钟数 × 每分钟单价（若所选模型按时长计费）。
+              <a
+                href={modelGuideLinks.transcription}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                查看默认 Whisper 模型计费
+              </a>
+              ；使用其他模型或地址时请查对应平台价格。
+            </p>
           </Panel>
           <Panel
             title="麦克风试一试"
@@ -171,7 +190,10 @@ export function SensesPage({ state }: { state: Snapshot }) {
                       ? "正在识别…"
                       : "说一句你好吧"}
                 </strong>
-                <p>{transcript || "请先保存语音服务配置，再开始测试。"}</p>
+                <p>
+                  {transcript ||
+                    "请先保存转写配置。测试会调用转写服务，可能消耗额度。"}
+                </p>
               </div>
             </div>
           </Panel>
@@ -182,6 +204,11 @@ export function SensesPage({ state }: { state: Snapshot }) {
             subtitle="一次分享，一次确认。由 MaiBot 的视觉模型理解截图。"
             action={<Monitor size={19} className="muted" />}
           >
+            <p className="model-guide-note">
+              分享截图后，MaiBot
+              可能调用视觉与聊天模型；开启自动屏幕陪伴后，变化的画面会按间隔发送并可能持续产生用量。费用以
+              MaiBot 所用模型或服务器服务方规则为准。
+            </p>
             <SettingToggle
               state={state}
               name="screenEnabled"
@@ -410,6 +437,10 @@ export function SensesPage({ state }: { state: Snapshot }) {
           subtitle="打开后自然说话，停顿时自动发送。麦麦回复期间会暂停聆听，避免回声。"
           action={<AudioLines size={19} className="muted" />}
         >
+          <p className="model-guide-note">
+            连续对话会反复调用录音转写、MaiBot
+            回复和在线朗读，三部分可能分别收费。关闭连续语音可停止自动录音；自动朗读的开关独立控制。
+          </p>
           <Toggle
             label="连续语音对话"
             hint="由桌宠窗口使用麦克风；断线、隐藏桌宠或进入专注时会停止。"

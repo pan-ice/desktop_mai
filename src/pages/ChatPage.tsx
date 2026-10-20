@@ -20,6 +20,8 @@ import { CameraShare } from "../components/CameraShare";
 import { speak, useRecorder } from "../hooks/useVoice";
 import type { Page, Snapshot } from "../../shared/types";
 import { messageContent } from "../../shared/message-content";
+import { replySpeechText } from "../../shared/speech-text";
+import { MessageAudio } from "../components/ChatAudio";
 
 export function ChatPage({
   state,
@@ -193,7 +195,12 @@ export function ChatPage({
                           alt={part.name || "麦麦分享的图片"}
                         />
                       ) : (
-                        <audio key={index} controls src={part.dataUrl} />
+                        <MessageAudio
+                          key={index}
+                          id={`${message.role}:${message.id}:${index}`}
+                          url={part.dataUrl}
+                          title={`${message.role === "assistant" ? state.settings.nickname : state.settings.userName}的音频`}
+                        />
                       ),
                     )}
                     {message.delivery === "failed" && (
@@ -205,18 +212,19 @@ export function ChatPage({
                       </span>
                     )}
                   </div>
-                  {message.role === "assistant" && message.text && (
-                    <button
-                      className="message-speak"
-                      aria-label="朗读这条消息"
-                      onClick={() => {
-                        void speak(message.text, state.settings);
-                      }}
-                    >
-                      <Volume2 size={13} />
-                      朗读
-                    </button>
-                  )}
+                  {message.role === "assistant" &&
+                    replySpeechText(message).trim() && (
+                      <button
+                        className="message-speak"
+                        aria-label="朗读这条消息"
+                        onClick={() => {
+                          void speak(replySpeechText(message), state.settings);
+                        }}
+                      >
+                        <Volume2 size={13} />
+                        朗读
+                      </button>
+                    )}
                 </div>
               </div>
             ))

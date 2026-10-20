@@ -9,6 +9,7 @@ import type {
   TtsProfile,
   TtsProvider,
   VoiceCloneInput,
+  VoiceImportInput,
 } from "./tts";
 
 export type ConnectionPhase =
@@ -52,6 +53,10 @@ export interface Settings {
   voiceEnabled: boolean;
   ttsEngine: "system" | "api";
   ttsProvider: TtsProvider;
+  ttsNativeOutput: boolean;
+  ttsNaturalSpeech: boolean;
+  ttsPreloadNext: boolean;
+  ttsCloneFidelity: boolean;
   ttsProfiles: Partial<Record<TtsProvider, TtsProfile>>;
   systemVoice: string;
   speechBaseUrl: string;
@@ -210,6 +215,7 @@ export interface DesktopApi {
   captureScreen(sourceId: string): Promise<string>;
   transcribe(data: ArrayBuffer, mime: string): Promise<string>;
   synthesize(text: string): Promise<string>;
+  importVoice(input: VoiceImportInput): Promise<ClonedVoice>;
   cloneVoice(input: VoiceCloneInput): Promise<ClonedVoice>;
   queryVoice(id: string): Promise<ClonedVoice>;
   voiceConversation(active: boolean): Promise<void>;

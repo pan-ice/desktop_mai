@@ -1,11 +1,42 @@
 # 模型朗读与在线音色复刻
 
-在「声音与感知」选择「模型语音 · 在线服务」，可使用硅基流动、阿里云百炼、MiniMax、火山引擎或小米 MiMo 合成文字，并创建和保存复刻音色。也保留系统朗读和兼容 OpenAI 的合成接口。复刻接口按服务商分别实现，不能只更换通用接口的模型名。
+「声音与感知」顶部提供统一音频导入入口，支持小米 MiMo、硅基流动、MiniMax、火山引擎和阿里云百炼。选择服务商后直接导入，客户端自动命名、准备并选用音色。系统朗读和兼容 OpenAI 的合成接口保留在高级设置中；通用合成接口没有统一的音色复刻协议。
+
+## 配置页面的原理与消费说明
+
+页面顶部解释「录音转写 → MaiBot 思考与回复 → 语音合成」的调用流程，区分聊天、转写和朗读的配置与结算账号，并说明服务地址、API Key、模型、音色及用量单位。系统朗读不调用本页的云端合成接口；本地服务仍有部署方的算力和托管成本。
+
+选择音色服务后，导入按钮前显示关键消费提示，详细原理与计费可展开查看。MiMo 导入只存本机，参考音频随每段合成发送；2026-10-19 核对时官方 TTS 限时免费。硅基流动导入包含自动转写，默认 CosyVoice2 按 UTF-8 字节计量。百炼简单导入的音色创建与朗读分别计费。MiniMax 首次正式合成收取一次性复刻音色费，火山自定义后付费音色首次正式合成收取槽位费并固定音色；本页试听与后续自动朗读均属于正式合成调用。
+
+保存配置不请求合成或转写；试听、手动重新朗读、麦克风测试、连续语音和自动屏幕陪伴的调用与费用在对应位置说明。已有音频可直接播放，停止播放不能保证已发送请求不计费。页面提供减少调用的方法，并明确实际用量、余额与账单应在服务商控制台查询。
+
+计费规则核对日期、官方价格页链接与平台差异提示随服务显示，不将某家官方价格应用到其他兼容接口或中转平台。链接在系统浏览器打开；应用只允许固定官方说明页，其他弹窗地址和直接页面导航继续禁止。`npm run test:model-guidance` 使用隔离 Electron 验证五家提示、链接交付及浏览说明不产生网络请求；不打开真实外部浏览器，不调用在线模型。
 
 ## 使用
 
-1. 选择服务商，填写该服务商的合成 API Key。服务地址、模型和音色有默认值，可按账号的地域、权限和模型版本调整。点击「保存声音设置」。
-2. 展开「音色复刻」，填写名称及参考材料，点击「提交音色复刻」。提交会向所选服务商发送参考材料，按其规则计费。MiMo 点击「保存参考音色」，此时只在本机保存样本，首次云端请求发生在试听或朗读时。
+### 原生输出、连续播放与参考录音
+
+「模型原生输出」默认开启，包括已有配置升级后首次使用。只发送朗读正文、所选模型与音色 / 参考录音，以及鉴权、传输和音频格式所需字段；不添加语气指令、语速、音高、语言增强、文本归一化或还原模式，播放器以 1 倍原速播放。MiMo 仅发送一条 `assistant` 正文；CosyVoice2 不加指令前缀。原来保存的增强设置和语速会保留，但在原生模式下不生效。本机音量、跳过引用与超长正文分段继续可用。
+
+关闭「模型原生输出」后可自行开启「自然聊天语气」作对比：MiMo 把语气要求放在 `user` 消息，正文单独放 `assistant`；CosyVoice2 使用官方指令分隔符；火山预置 2.0 音色使用 `additions.context_texts`，不会同时传入互斥的 `model`。火山复刻保留所选合成模型，另提供默认关闭的「还原模式」，仅适合参考录音与正文同语种。MiniMax 2.8 / 2.6 的 HD / Turbo 使用高质量文本归一化改善数字和符号读法，不强制固定情绪；其他模型不猜测未接入的语气参数。开启这些选项后，点击保存或试听生效。
+
+「长回复连续播放」默认开启，在当前段开始播放后预先合成下一段，最多提前一段，减少每段之间的模型等待。关闭此选项后恢复播完再请求；停止后不继续提交后文，但已经提交的当前段或预合成仍可能计费。手动启用的语气指令也可能计入服务商用量，不额外请求聊天模型来改写回复。
+
+导入时建议使用 10–20 秒、单人、自然说话且无配乐、混响与破音的参考片段。客户端对不超过 3 MB 的文件在本机解码，提示过短 / 过长、长静音、过低音量和削波风险；大文件或无法本机解码时给出提示后继续原导入流程，不增加转写请求。解码检查不能判断说话人身份、背景音乐或保证声纹相似度，云端实际音质仍需对照试听。
+
+1. 在「音色服务」选择服务商，点击「导入音色音频」，或拖入录音。客户端用文件名自动命名，不需要填写音色 ID、原文或公网链接。
+2. 每家服务首次填写一次 API Key。没有 Key 时，其他服务先保留待导入文件，点击「保存并导入音色」后上传；MiMo 可先保存在本机，再点击「保存并启用音色」。不会借用其他服务或录音转写的 Key。
+3. 准备成功后自动启用回复朗读，点击「试听声音」确认。火山训练中的音色会显示进度，由主进程自动查询，离开设置页和重启后仍会继续；失败或网络中断时保留原声音，显示重试进度。手动选择另一声音或关闭自动朗读会取消旧任务的自动选用。
+4. 以后只需导入音频；也可在「已导入的音色」中切换。格式和大小限制随服务显示。MiMo 导入仅保存本机样本，朗读时随每次请求发送；其他服务在导入时发送到所选服务，按其规则计费。
+
+硅基流动通过自身的 `FunAudioLLM/SenseVoiceSmall` 自动识别原文，再提交复刻；识别失败可在「补充选项」填写原文并点击重试，无需重新选文件。MiniMax 和火山自动生成编号。火山已有付费 `S_` 槽位可在补充选项填写；留空创建自定义音色，首次朗读会产生槽位费用，页面会提示。
+
+百炼简单导入使用 `qwen-voice-enrollment` 的本地 Base64 音频接口，并配对 `qwen3-tts-vc-2026-01-22` 合成模型与 `/services/aigc/multimodal-generation/generation`；保留配置的地域 / 业务空间地址。无需把文件上传到其他存储，也无需公网音频链接。与原有 Qwen-Audio-TTS 链接复刻分别处理，不能混用音色与目标模型。
+
+### 其他服务与高级设置
+
+1. 展开「高级声音设置」，选择「模型语音 · 在线服务」与服务商，填写其合成 API Key。服务地址、模型和音色有默认值，可按账号的地域、权限和模型版本调整。点击「保存声音设置」。
+2. 展开「更多音色复刻设置」，填写名称及参考材料，点击「提交音色复刻」。提交会向所选服务商发送参考材料，按其规则计费。MiMo 的「保存参考音色」仅保存样本；需要一键选用时使用页面顶部的导入入口。
 3. 若显示「审核 / 训练中」，点击「查询状态」。就绪后点击「使用音色」，再用上方「试听声音」确认。创建音色不会自动切换当前朗读音色。
 4. 开启「自动朗读回复」。只含文字的 MaiBot 回复交给当前合成模型；包含语音的回复优先播放原音频，全部音频片段按顺序播放。长文字分段合成，保留完整尾部；停止、关闭朗读或进入专注模式会取消待播内容。
 
@@ -13,21 +44,21 @@
 
 ## 服务要求
 
-| 服务商 | 默认模型 / 接口 | 复刻材料与处理 |
-| --- | --- | --- |
-| 硅基流动 | `FunAudioLLM/CosyVoice2-0.5B`，`/v1/audio/speech` | 上传 MP3 / WAV 并填写参考原文，建议 8–10 秒且少于 30 秒；上传返回的 `speech:` URI 用作合成音色 |
-| 阿里云百炼 | `qwen-audio-3.0-tts-flash`，`/api/v1/services/audio/tts/SpeechSynthesizer` | 填写服务商能直接读取的公网参考音频链接，创建后查询审核状态；复刻时的目标模型须与合成模型一致 |
-| MiniMax | `speech-2.8-hd`，`/v1/t2a_v2` | 上传 10 秒至 5 分钟 MP3 / WAV / M4A，不超过 20 MB；ID 留空可自动生成，复刻后 7 天内需正式合成一次以保留音色 |
-| 火山引擎 | `seed-tts-2.0-standard`，`/api/v3/tts/unidirectional` | 新版控制台 API Key，参考文件不超过 10 MB，填写已购 `S_` 槽位或自定义 ID；状态为 Success / Active 时才可使用 |
-| 小米 MiMo | `mimo-v2.5-tts` / `mimo-v2.5-tts-voiceclone`，`/v1/chat/completions` | 预置音色可直接选择；复刻样本为 MP3 / WAV，Base64 编码后不超过 10 MB，客户端将原文件限制为约 7.5 MB。每次合成携带样本，无需云端训练与审核 |
+| 服务商     | 默认模型 / 接口                                                             | 复刻材料与处理                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 硅基流动   | `FunAudioLLM/CosyVoice2-0.5B`，`/v1/audio/speech`                           | 简单导入自动识别 MP3 / WAV 原文后上传；高级复刻仍可手填原文。建议 8–10 秒且少于 30 秒，文件不超过 20 MB。上传返回的 `speech:` URI 用作合成音色 |
+| 阿里云百炼 | 简单导入 `qwen3-tts-vc-2026-01-22`；高级配置保留 `qwen-audio-3.0-tts-flash` | 简单导入直接发送 MP3 / WAV，小于约 7.5 MB；旧 Qwen-Audio-TTS 仍需公网链接和审核。目标模型必须与合成时一致                                      |
+| MiniMax    | `speech-2.8-hd`，`/v1/t2a_v2`                                               | 上传 10 秒至 5 分钟 MP3 / WAV / M4A，不超过 20 MB；ID 留空可自动生成，复刻后 7 天内需正式合成一次以保留音色                                    |
+| 火山引擎   | `seed-tts-2.0-standard`，`/api/v3/tts/unidirectional`                       | 新版控制台 API Key，参考文件不超过 10 MB；简单导入自动创建自定义 ID，也可填已购 `S_` 槽位，自动查询就绪后选用                                  |
+| 小米 MiMo  | `mimo-v2.5-tts` / `mimo-v2.5-tts-voiceclone`，`/v1/chat/completions`        | 预置音色可直接选择；复刻样本为 MP3 / WAV，Base64 编码后不超过 10 MB，客户端将原文件限制为约 7.5 MB。每次合成携带样本，无需云端训练与审核       |
 
-百炼使用 Qwen-Audio-TTS 的 HTTP 合成与 `voice-enrollment` 接口，未把旧版 Qwen-TTS 的另一套路径混入此协议。可将默认域名改为业务空间专属地址 `https://你的空间.cn-beijing.maas.aliyuncs.com/api/v1`，其他地域也应使用对应空间地址和 Key。参考链接需在服务端完成读取前持续有效。
+百炼高级设置中的 Qwen-Audio-TTS 使用 HTTP 合成与 `voice-enrollment` 接口；简单导入的 Qwen-TTS 使用上述独立协议。可将默认域名改为业务空间专属地址 `https://你的空间.cn-beijing.maas.aliyuncs.com/api/v1`，其他地域也应使用对应空间地址和 Key。使用旧链接方式时，参考链接需在服务端完成读取前持续有效。
 
 火山使用新版 `X-Api-Key` 鉴权。系统音色通常使用资源 `seed-tts-2.0`，通过此页面复刻的音色保存为 `seed-icl-2.0`。自定义后付费音色的首次正式合成会收取槽位费并固定音色，桌宠的「试听声音」调用正式合成接口，因此应先在服务商控制台确认复刻试听效果，再在桌宠应用和合成。旧版 AppID / Access Token 鉴权未在此页面实现。
 
 参考文件的格式和大小由客户端检查，音频时长、清晰度及服务权限仍由服务商判断。模型与账号权限以服务商控制台为准，修改模型后可能需要重新复刻；不能把某家返回的音色 ID 用于另一家服务。
 
-MiMo 默认地址 `https://api.xiaomimimo.com/v1`，使用独立 Key 和官方 `api-key` 鉴权。预置音色可选冰糖、茉莉、苏打、白桦以及英文音色；选择本机参考音色后自动切换为 `mimo-v2.5-tts-voiceclone`。参考样本在每次试听、自动朗读及长回复的每段请求中发送给所配置的 MiMo 服务，不返回可迁移的云端音色 ID；迁移客户端时需同时保留应用数据目录里的参考文件。语速由本机播放器调整。当前接入预置合成和音频复刻，未提供文本设计音色模式。
+MiMo 默认地址 `https://api.xiaomimimo.com/v1`，使用独立 Key 和官方 `api-key` 鉴权。预置音色可选冰糖、茉莉、苏打、白桦以及英文音色；选择本机参考音色后自动切换为 `mimo-v2.5-tts-voiceclone`。参考样本在每次试听、自动朗读及长回复的每段请求中发送给所配置的 MiMo 服务，不返回可迁移的云端音色 ID；迁移客户端时需同时保留应用数据目录里的参考文件。原生模式按原速播放，关闭原生模式后语速可由本机播放器调整。当前接入预置合成和音频复刻，未提供文本设计音色模式。
 
 ## 录音转写与兼容
 
@@ -37,7 +68,7 @@ MiMo 默认地址 `https://api.xiaomimimo.com/v1`，使用独立 Key 和官方 `
 
 ## 验证范围
 
-`npm test` 包含本机 HTTP 契约测试，检查各服务请求路径、鉴权、multipart 上传、MiniMax int64 文件 ID、状态查询、音频解析及错误响应。`npm run test:tts-clone` 使用实际 Electron、preload、系统密钥存储及本机模拟服务验证创建、查询、应用、试听、长文分段、停止及重启恢复；声音输出替换为确定的结束事件。
+`npm test` 包含本机 HTTP 契约测试，检查各服务请求路径、鉴权、multipart 上传、MiniMax int64 文件 ID、状态查询、音频解析、自动转写、百炼本地音频与模型匹配及错误响应。`npm run test:voice-import` 使用实际 Electron 验证五家默认入口的导入、自动命名和选用、独立 Key、识别失败后补充原文重试、后台状态查询与重启续查、失败保留原声音及手动切换后不被旧训练覆盖。`npm run test:tts-clone` 覆盖原有五家高级创建、查询、应用、试听、长文分段、停止及重启恢复；声音输出替换为确定的结束事件，合成请求使用本机模拟服务。
 
 这些测试不请求云端付费接口，也没有验证真实账号权限、云端训练结果或复刻音质。实际云端效果需使用有权限的 Key 和符合服务要求的参考音频确认。
 
@@ -45,8 +76,8 @@ MiMo 默认地址 `https://api.xiaomimimo.com/v1`，使用独立 Key 和官方 `
 
 核对日期：2026-10-19。
 
-- 硅基流动：[上传音色](https://docs.siliconflow.cn/docs/api/uploads-audio-voice-post)、[语音合成](https://docs.siliconflow.cn/docs/api/audio-speech-post)。
-- 百炼：[声音复刻 HTTP](https://help.aliyun.com/zh/model-studio/voice-clone-design-http-api)、[Qwen-Audio-TTS HTTP](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api)。
+- 硅基流动：[上传音色](https://docs.siliconflow.cn/docs/api/uploads-audio-voice-post)、[语音合成](https://docs.siliconflow.cn/docs/api/audio-speech-post)、[自动识别原文](https://docs.siliconflow.cn/docs/api/audio-transcriptions-post)。
+- 百炼：[声音复刻 HTTP](https://help.aliyun.com/zh/model-studio/voice-clone-design-http-api)、[Qwen-Audio-TTS HTTP](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api)、[Qwen3 复刻模型](https://help.aliyun.com/zh/model-studio/qwen3-tts-vc)、[Qwen-TTS HTTP 合成](https://help.aliyun.com/zh/model-studio/qwen-tts-api)。
 - MiniMax：[声音复刻](https://platform.minimax.cn/docs/api-reference/voice-cloning-clone)、[文件上传](https://platform.minimax.cn/docs/api-reference/file-management-upload)、[HTTP 合成](https://platform.minimax.io/docs/api-reference/speech-t2a-http)。
 - 火山：[声音训练](https://docs.volcengine.com/docs/DoubaoVoice/tone-training-http?lang=zh)、[状态查询](https://docs.volcengine.com/docs/DoubaoVoice/tone-query-http?lang=zh)、[HTTP 合成](https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http?lang=zh)、[流式完成状态](https://docs.volcengine.com/docs/DoubaoVoice/HTTPChunkedSSEUnidirectionalStreaming-V3?lang=zh)。
 - MiMo：[预置音色与参考音频复刻](https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5)、[API 鉴权](https://mimo.mi.com/docs/zh-CN/quick-start/faq/api-integration)。

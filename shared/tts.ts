@@ -10,8 +10,33 @@ export const TTS_PROVIDERS = [
   "mimo",
 ] as const;
 export type TtsProvider = (typeof TTS_PROVIDERS)[number];
+export const VOICE_IMPORT_PROVIDERS = [
+  "mimo",
+  "siliconflow",
+  "minimax",
+  "volcengine",
+  "bailian",
+] as const;
+export type VoiceImportProvider = (typeof VOICE_IMPORT_PROVIDERS)[number];
+export const BAILIAN_IMPORT_MODEL = "qwen3-tts-vc-2026-01-22";
 // MiMo 限制携带 MIME 前缀的 Base64 样本不超过 10 MB。
 export const MIMO_REFERENCE_MAX_BYTES = 7_499_952;
+export function voiceImportAudioRules(provider: VoiceImportProvider) {
+  return {
+    formats:
+      provider === "minimax"
+        ? ["mp3", "wav", "m4a"]
+        : provider === "volcengine"
+          ? ["mp3", "wav", "m4a", "ogg", "aac"]
+          : ["mp3", "wav"],
+    maxBytes:
+      provider === "mimo" || provider === "bailian"
+        ? MIMO_REFERENCE_MAX_BYTES
+        : provider === "volcengine"
+          ? 10_000_000
+          : 20_000_000,
+  };
+}
 export const ttsProviderSchema = z.enum(TTS_PROVIDERS);
 export const ttsBaseUrlSchema = z
   .string()
@@ -157,6 +182,8 @@ export const clonedVoiceSchema = z
     voiceId: z.string().min(1).max(512),
     profile: ttsProfileSchema,
     status: z.enum(["pending", "ready", "failed"]),
+    autoUse: z.boolean().optional(),
+    statusMessage: z.string().max(160).optional(),
     createdAt: z.number().int().nonnegative(),
   })
   .strict();
@@ -183,3 +210,13 @@ export const voiceCloneInputSchema = z
       .optional(),
   })
   .strict();
+
+export const voiceImportInputSchema = z
+  .object({
+    provider: z.enum(VOICE_IMPORT_PROVIDERS),
+    audio: voiceCloneInputSchema.shape.audio.unwrap(),
+    referenceText: voiceCloneInputSchema.shape.referenceText,
+    voiceId: voiceCloneInputSchema.shape.voiceId,
+  })
+  .strict();
+export type VoiceImportInput = z.infer<typeof voiceImportInputSchema>;

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   createClonedVoice,
+  createImportedVoice,
   queryClonedVoice,
   synthesizeTts,
 } from "../electron/tts";
@@ -12,11 +13,13 @@ import { defaultSettings } from "../shared/defaults";
 import {
   TTS_PROVIDERS,
   MIMO_REFERENCE_MAX_BYTES,
+  BAILIAN_IMPORT_MODEL,
   ttsProfile,
   ttsProviders,
   type TtsProvider,
 } from "../shared/tts";
 import { speechSegments } from "../shared/speech-text";
+import { NATURAL_SPEECH_INSTRUCTION } from "../shared/speech-delivery";
 
 const wav = Buffer.alloc(46);
 wav.write("RIFF");
@@ -103,6 +106,8 @@ function settings(provider: TtsProvider) {
   return {
     ...structuredClone(defaultSettings),
     ttsProvider: provider,
+    ttsNativeOutput: false,
+    ttsNaturalSpeech: true,
     speechRate: 1.2,
     ttsProfiles: {
       [provider]: {
@@ -113,44 +118,168 @@ function settings(provider: TtsProvider) {
   };
 }
 
+function synthesisResponse(provider: TtsProvider, req: Captured) {
+  if (req.path.startsWith("/result.wav")) return { data: wav };
+  if (provider === "mimo")
+    return {
+      data: {
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { audio: { data: wav.toString("base64") } },
+          },
+        ],
+      },
+    };
+  if (provider === "minimax")
+    return {
+      data: {
+        base_resp: { status_code: 0 },
+        data: { audio: wav.toString("hex") },
+      },
+    };
+  if (provider === "bailian")
+    return {
+      data: {
+        output: { audio: { url: `${base}/result.wav?signature=kept` } },
+      },
+    };
+  if (provider === "volcengine")
+    return {
+      data: [
+        JSON.stringify({ code: 0, data: wav.toString("base64") }),
+        JSON.stringify({ code: 20000000 }),
+      ].join("\n"),
+    };
+  return { data: wav };
+}
+
+describe("模型原生输出", () => {
+  it.each(TTS_PROVIDERS)(
+    "%s 跳过保存的语气和调音，只提交必要字段",
+    async (provider) => {
+      respond = (req) => synthesisResponse(provider, req);
+      const config = settings(provider);
+      config.ttsNativeOutput = true;
+      config.ttsCloneFidelity = true;
+      const profile = ttsProfile(config);
+      const text = "今天 8:30 见。\n嗯，好呀！";
+      expect(await synthesizeTts(config, "local-test-key", text)).toBe(
+        `data:audio/wav;base64,${wav.toString("base64")}`,
+      );
+      const bodies = {
+        openai: {
+          model: profile.model,
+          input: text,
+          voice: profile.voice,
+          response_format: "mp3",
+        },
+        siliconflow: {
+          model: profile.model,
+          input: text,
+          voice: profile.voice,
+          response_format: "mp3",
+        },
+        mimo: {
+          model: profile.model,
+          messages: [{ role: "assistant", content: text }],
+          audio: { format: "wav", voice: profile.voice },
+          stream: false,
+        },
+        minimax: {
+          model: profile.model,
+          text,
+          stream: false,
+          output_format: "hex",
+          voice_setting: { voice_id: profile.voice },
+          audio_setting: { format: "mp3" },
+        },
+        bailian: {
+          model: profile.model,
+          input: { text, voice: profile.voice, format: "wav" },
+        },
+        volcengine: {
+          req_params: {
+            text,
+            speaker: profile.voice,
+            audio_params: { format: "mp3" },
+          },
+        },
+      };
+      expect(requests[0].body).toEqual(bodies[provider]);
+    },
+  );
+
+  it("百炼 Qwen3 复刻原生输出不额外指定语言", async () => {
+    respond = (req) => synthesisResponse("bailian", req);
+    const config = settings("bailian");
+    config.ttsNativeOutput = true;
+    config.ttsProfiles.bailian!.model = BAILIAN_IMPORT_MODEL;
+    config.ttsProfiles.bailian!.voice = "qwen-custom-voice";
+    await synthesizeTts(config, "local-test-key", "正文原样发送");
+    expect(requests[0].path).toBe(
+      "/bailian/services/aigc/multimodal-generation/generation",
+    );
+    expect(requests[0].body).toEqual({
+      model: BAILIAN_IMPORT_MODEL,
+      input: { text: "正文原样发送", voice: "qwen-custom-voice" },
+    });
+  });
+
+  it("火山复刻保留配对模型，跳过已开启的还原模式与语气指令", async () => {
+    respond = (req) => synthesisResponse("volcengine", req);
+    const config = settings("volcengine");
+    config.ttsNativeOutput = true;
+    config.ttsCloneFidelity = true;
+    config.ttsProfiles.volcengine!.resourceId = "seed-icl-2.0";
+    config.ttsProfiles.volcengine!.voice = "S_example01";
+    await synthesizeTts(config, "local-test-key", "只按参考音色生成");
+    expect(requests[0].headers["x-api-resource-id"]).toBe("seed-icl-2.0");
+    expect(requests[0].body).toEqual({
+      req_params: {
+        text: "只按参考音色生成",
+        speaker: "S_example01",
+        model: "seed-tts-2.0-standard",
+        audio_params: { format: "mp3" },
+      },
+    });
+  });
+
+  it("新配置与缺少原生开关的旧配置默认不添加指令", async () => {
+    expect(defaultSettings.ttsNativeOutput).toBe(true);
+    expect(defaultSettings.ttsNaturalSpeech).toBe(false);
+    respond = (req) => synthesisResponse("mimo", req);
+    const config = settings("mimo");
+    Reflect.deleteProperty(config, "ttsNativeOutput");
+    await synthesizeTts(config, "local-test-key", "原生输出");
+    expect(requests[0].body.messages).toEqual([
+      { role: "assistant", content: "原生输出" },
+    ]);
+  });
+});
+
 describe("在线模型语音协议", () => {
+  it("MiMo 自然聊天指令与朗读正文分开传入，不把语气要求读出来", async () => {
+    respond = () => ({
+      data: {
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { audio: { data: wav.toString("base64") } },
+          },
+        ],
+      },
+    });
+    await synthesizeTts(settings("mimo"), "local-test-key", "今天过得怎么样？");
+    expect(requests[0].body.messages).toEqual([
+      { role: "user", content: expect.stringContaining("自然") },
+      { role: "assistant", content: "今天过得怎么样？" },
+    ]);
+  });
+
   for (const provider of TTS_PROVIDERS)
     it(`${provider} 使用独立协议合成可播放音频`, async () => {
-      respond = (req) => {
-        if (req.path.startsWith("/result.wav")) return { data: wav };
-        if (provider === "mimo")
-          return {
-            data: {
-              choices: [
-                {
-                  finish_reason: "stop",
-                  message: { audio: { data: wav.toString("base64") } },
-                },
-              ],
-            },
-          };
-        if (provider === "minimax")
-          return {
-            data: {
-              base_resp: { status_code: 0 },
-              data: { audio: wav.toString("hex") },
-            },
-          };
-        if (provider === "bailian")
-          return {
-            data: {
-              output: { audio: { url: `${base}/result.wav?signature=kept` } },
-            },
-          };
-        if (provider === "volcengine")
-          return {
-            data: [
-              JSON.stringify({ code: 0, data: wav.toString("base64") }),
-              JSON.stringify({ code: 20000000 }),
-            ].join("\n"),
-          };
-        return { data: wav };
-      };
+      respond = (req) => synthesisResponse(provider, req);
       const config = settings(provider),
         profile = ttsProfile(config);
       expect(
@@ -165,7 +294,9 @@ describe("在线模型语音协议", () => {
         expect(req.body.req_params).toEqual({
           text: "你好，麦麦。",
           speaker: profile.voice,
-          model: profile.model,
+          additions: JSON.stringify({
+            context_texts: [NATURAL_SPEECH_INSTRUCTION],
+          }),
           audio_params: { format: "mp3", sample_rate: 24000, speech_rate: 20 },
         });
       } else if (provider === "mimo") {
@@ -174,7 +305,10 @@ describe("在线模型语音协议", () => {
         expect(req.headers.authorization).toBeUndefined();
         expect(req.body).toEqual({
           model: "mimo-v2.5-tts",
-          messages: [{ role: "assistant", content: "你好，麦麦。" }],
+          messages: [
+            { role: "user", content: NATURAL_SPEECH_INSTRUCTION },
+            { role: "assistant", content: "你好，麦麦。" },
+          ],
           audio: { format: "wav", voice: "mimo_default" },
           stream: false,
         });
@@ -209,7 +343,10 @@ describe("在线模型语音协议", () => {
           expect(req.path).toBe(`/${provider}/audio/speech`);
           expect(req.body).toEqual({
             model: profile.model,
-            input: "你好，麦麦。",
+            input:
+              provider === "siliconflow"
+                ? `${NATURAL_SPEECH_INSTRUCTION}<|endofprompt|>你好，麦麦。`
+                : "你好，麦麦。",
             voice: profile.voice,
             response_format: "mp3",
             speed: 1.2,
@@ -217,6 +354,70 @@ describe("在线模型语音协议", () => {
         }
       }
     });
+
+  it("自然语气可关闭，MiMo 与硅基保留原有正文协议", async () => {
+    respond = (req) =>
+      req.path.startsWith("/mimo")
+        ? {
+            data: {
+              choices: [
+                { message: { audio: { data: wav.toString("base64") } } },
+              ],
+            },
+          }
+        : { data: wav };
+    for (const provider of ["mimo", "siliconflow"] as const) {
+      const config = settings(provider);
+      config.ttsNaturalSpeech = false;
+      await synthesizeTts(config, "test-key", "保留原本表达");
+    }
+    expect(requests[0].body.messages).toEqual([
+      { role: "assistant", content: "保留原本表达" },
+    ]);
+    expect(requests[1].body.input).toBe("保留原本表达");
+  });
+
+  it("硅基其他模型不注入 CosyVoice 指令", async () => {
+    respond = () => ({ data: wav });
+    const config = settings("siliconflow");
+    config.ttsProfiles.siliconflow!.model = "fnlp/MOSS-TTSD-v0.5";
+    await synthesizeTts(config, "test-key", "原本的正文");
+    expect(requests[0].body.input).toBe("原本的正文");
+  });
+
+  it("火山复刻只传复刻模型和可选还原参数，不混入预置音色语气指令", async () => {
+    respond = () => ({
+      data: `${JSON.stringify({ code: 0, data: wav.toString("base64") })}\n${JSON.stringify({ code: 20000000 })}`,
+    });
+    const config = settings("volcengine");
+    config.ttsProfiles.volcengine!.resourceId = "seed-icl-2.0";
+    config.ttsProfiles.volcengine!.voice = "S_example01";
+    config.ttsCloneFidelity = true;
+    await synthesizeTts(config, "test-key", "保持参考的说话习惯");
+    expect(requests[0].body.req_params.model).toBe("seed-tts-2.0-standard");
+    expect(JSON.parse(requests[0].body.req_params.additions)).toEqual({
+      tone_fidelity: true,
+    });
+    config.ttsCloneFidelity = false;
+    await synthesizeTts(config, "test-key", "跨语种时可关闭");
+    expect(requests[1].body.req_params.additions).toBeUndefined();
+  });
+
+  it("MiniMax 高质量归一化只对支持的模型启用，不固定情绪", async () => {
+    respond = () => ({
+      data: {
+        base_resp: { status_code: 0 },
+        data: { audio: wav.toString("hex") },
+      },
+    });
+    const config = settings("minimax");
+    await synthesizeTts(config, "test-key", "3.14 元，明天 8:30 见。");
+    expect(requests[0].body.text_normalization_mode).toBe("quality");
+    expect(requests[0].body.voice_setting.emotion).toBeUndefined();
+    config.ttsProfiles.minimax!.model = "speech-02-hd";
+    await synthesizeTts(config, "test-key", "旧模型仍能朗读");
+    expect(requests[1].body.text_normalization_mode).toBeUndefined();
+  });
 
   it("兼容火山 SSE，拒绝截断流和业务错误", async () => {
     respond = () => ({
@@ -310,6 +511,7 @@ describe("在线音色复刻", () => {
       await readFile(join(directory, "voice-references", `${voice.id}.wav`)),
     ).toEqual(wav);
     config.ttsProfiles.mimo = JSON.parse(JSON.stringify(voice.profile));
+    config.ttsNativeOutput = true;
     respond = () => ({
       data: {
         choices: [
@@ -325,13 +527,16 @@ describe("在线音色复刻", () => {
         await synthesizeTts(config, "mimo-only-key", text, directory),
       ).toContain("data:audio/wav");
     }
-    for (const req of requests) {
+    for (const [index, req] of requests.entries()) {
       expect(req.path).toBe("/mimo/chat/completions");
       expect(req.body.audio).toEqual({
         format: "wav",
         voice: `data:audio/wav;base64,${wav.toString("base64")}`,
       });
       expect(req.body.model).toBe("mimo-v2.5-tts-voiceclone");
+      expect(req.body.messages).toEqual([
+        { role: "assistant", content: ["第一段", "第二段"][index] },
+      ]);
       expect(req.headers["api-key"]).toBe("mimo-only-key");
       expect(req.headers.authorization).toBeUndefined();
     }
@@ -550,6 +755,170 @@ describe("在线音色复刻", () => {
   });
 });
 
+describe("简单音频导入", () => {
+  it("硅基流动使用自身 Key 和地址自动识别原文后上传，不读取 ASR 配置", async () => {
+    respond = (req) => ({
+      data: req.path.endsWith("transcriptions")
+        ? { text: "  自动识别的参考原文。  " }
+        : { uri: "speech:custom:auto:1" },
+    });
+    const config = settings("siliconflow");
+    const before = structuredClone(config);
+    const voice = await createImportedVoice(
+      config,
+      "sf-only-key",
+      { provider: "siliconflow", audio },
+      await referenceDirectory(),
+    );
+    expect(voice).toMatchObject({
+      name: "reference",
+      status: "ready",
+      provider: "siliconflow",
+    });
+    expect(requests.map((req) => req.path)).toEqual([
+      "/siliconflow/audio/transcriptions",
+      "/siliconflow/uploads/audio/voice",
+    ]);
+    expect(requests[0].form?.get("model")).toBe("FunAudioLLM/SenseVoiceSmall");
+    expect(requests[1].form?.get("text")).toBe("自动识别的参考原文。");
+    for (const req of requests)
+      expect(req.headers.authorization).toBe("Bearer sf-only-key");
+    expect(config).toEqual(before);
+  });
+
+  it("识别失败时不提交复刻，补充原文后可跳过识别重试", async () => {
+    respond = () => ({ data: { text: " " } });
+    const directory = await referenceDirectory();
+    await expect(
+      createImportedVoice(
+        settings("siliconflow"),
+        "sf-key",
+        { provider: "siliconflow", audio },
+        directory,
+      ),
+    ).rejects.toThrow("未能识别");
+    expect(requests).toHaveLength(1);
+    respond = () => ({ data: { uri: "speech:custom:manual:1" } });
+    await createImportedVoice(
+      settings("siliconflow"),
+      "sf-key",
+      { provider: "siliconflow", audio, referenceText: "手动补充的原文" },
+      directory,
+    );
+    expect(requests).toHaveLength(2);
+    expect(requests[1].form?.get("text")).toBe("手动补充的原文");
+  });
+
+  it("百炼直接提交本地音频，并用同一 Qwen 复刻模型合成，保留旧地址", async () => {
+    respond = (req) =>
+      req.path.endsWith("customization")
+        ? {
+            data: {
+              output: {
+                voice: "qwen-imported-voice",
+                target_model: BAILIAN_IMPORT_MODEL,
+              },
+            },
+          }
+        : req.path.startsWith("/result.wav")
+          ? { data: wav }
+          : {
+              data: {
+                output: { audio: { url: `${base}/result.wav?signature=kept` } },
+              },
+            };
+    const config = settings("bailian");
+    const voice = await createImportedVoice(
+      config,
+      "bl-key",
+      { provider: "bailian", audio },
+      await referenceDirectory(),
+    );
+    expect(voice).toMatchObject({
+      status: "ready",
+      profile: { baseUrl: `${base}/bailian`, model: BAILIAN_IMPORT_MODEL },
+    });
+    expect(requests[0].body).toMatchObject({
+      model: "qwen-voice-enrollment",
+      input: {
+        action: "create",
+        target_model: BAILIAN_IMPORT_MODEL,
+        audio: { data: `data:audio/wav;base64,${wav.toString("base64")}` },
+      },
+    });
+    expect(requests[0].body.input.url).toBeUndefined();
+    expect(requests[0].body.input.preferred_name).toMatch(/^[a-z0-9_]{1,16}$/);
+    config.ttsProfiles.bailian = voice.profile;
+    await synthesizeTts(config, "bl-key", "导入后试听。");
+    expect(requests[1].path).toBe(
+      "/bailian/services/aigc/multimodal-generation/generation",
+    );
+    expect(requests[1].body.input).toEqual({
+      text: "导入后试听。",
+      voice: voice.voiceId,
+      language_type: "Auto",
+    });
+    expect(requests[2].headers.authorization).toBeUndefined();
+    expect((await queryClonedVoice(voice, "bl-key")).status).toBe("ready");
+    expect(requests).toHaveLength(3);
+  });
+
+  it("百炼目标模型不一致时拒绝保存，文件超限时不上传", async () => {
+    respond = () => ({
+      data: { output: { voice: "bad-target", target_model: "another-model" } },
+    });
+    const directory = await referenceDirectory();
+    await expect(
+      createImportedVoice(
+        settings("bailian"),
+        "bl-key",
+        { provider: "bailian", audio },
+        directory,
+      ),
+    ).rejects.toThrow("模型不匹配");
+    await expect(
+      createImportedVoice(
+        settings("bailian"),
+        "bl-key",
+        {
+          provider: "bailian",
+          audio: {
+            name: "large.wav",
+            data: new ArrayBuffer(MIMO_REFERENCE_MAX_BYTES + 1),
+          },
+        },
+        directory,
+      ),
+    ).rejects.toThrow("音频不能为空且需小于");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("火山自动生成自定义编号，也可复用已购买的槽位", async () => {
+    respond = () => ({ data: { status: 1 } });
+    const directory = await referenceDirectory();
+    const voice = await createImportedVoice(
+      settings("volcengine"),
+      "vc-key",
+      { provider: "volcengine", audio },
+      directory,
+    );
+    expect(voice.voiceId).toMatch(/^Mai[a-f0-9]{32}$/);
+    expect(voice.status).toBe("pending");
+    expect(requests[0].body).toMatchObject({
+      speaker_id: "custom_speaker_id",
+      custom_speaker_id: voice.voiceId,
+    });
+    await createImportedVoice(
+      settings("volcengine"),
+      "vc-key",
+      { provider: "volcengine", audio, voiceId: "S_purchased" },
+      directory,
+    );
+    expect(requests[1].body.speaker_id).toBe("S_purchased");
+    expect(requests[1].body.custom_speaker_id).toBeUndefined();
+  });
+});
+
 describe("长回复完整分段", () => {
   for (const provider of TTS_PROVIDERS)
     it(`${provider} 保留尾部和 emoji，遵守字符与字节限制`, () => {
@@ -559,7 +928,9 @@ describe("长回复完整分段", () => {
       expect(segments.join("")).toBe(text);
       expect(segments.length).toBeGreaterThan(1);
       for (const segment of segments) {
-        expect(segment.length).toBeLessThanOrEqual(1000);
+        expect(segment.length).toBeLessThanOrEqual(
+          provider === "bailian" ? 600 : 1000,
+        );
         expect(Buffer.byteLength(segment)).toBeLessThanOrEqual(
           provider === "volcengine" ? 1000 : 3000,
         );
