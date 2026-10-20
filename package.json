@@ -21,6 +21,7 @@
     "test:plugin": "node scripts/test-plugin.mjs",
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
+    "test:interaction": "node scripts/interaction-smoke.mjs",
     "test:model-guidance": "node scripts/model-guidance-smoke.mjs",
     "test:chat-audio": "node scripts/chat-audio-smoke.mjs",
     "test:tts-clone": "node scripts/tts-clone-smoke.mjs",

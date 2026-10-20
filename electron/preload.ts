@@ -65,6 +65,23 @@ const api: DesktopApi = {
   queryVoice: (id) => invoke("queryVoice", id),
   setMood: (mood) => invoke("setMood", mood),
   voiceConversation: (active) => invoke("voiceConversation", active),
+  setVoiceInput: (phase) => invoke("setVoiceInput", phase),
+  reportPlayback: (report) => ipcRenderer.send("mai:playback-report", report),
+  onPlayback: (callback) => {
+    const handler = (
+      _: Electron.IpcRendererEvent,
+      value: Parameters<typeof callback>[0],
+    ) => callback(value);
+    ipcRenderer.on("mai:playback", handler);
+    return () => ipcRenderer.removeListener("mai:playback", handler);
+  },
+  stopPlayback: () => ipcRenderer.send("mai:stop-playback"),
+  onStopPlayback: (callback) => {
+    const handler = (_: Electron.IpcRendererEvent, id: string | null) =>
+      callback(id);
+    ipcRenderer.on("mai:stop-playback", handler);
+    return () => ipcRenderer.removeListener("mai:stop-playback", handler);
+  },
   focus: (minutes) => invoke("focus", minutes),
   showPet: () => invoke("showPet"),
   showDashboard: (page) => invoke("showDashboard", page),

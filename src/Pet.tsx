@@ -21,6 +21,7 @@ import { Toasts } from "./components/ui";
 import { stopSpeech, useRecorder, useSpeechReplies } from "./hooks/useVoice";
 import { useConversation } from "./hooks/useConversation";
 import { PET_CHARACTER, PET_SURFACE } from "../shared/pet-layout";
+import { interactionLabel } from "../shared/interaction";
 
 export function Pet() {
   const state = useSnapshot();
@@ -80,8 +81,10 @@ export function Pet() {
           <p>
             {state.focusUntil
               ? "你安心专注，我在这里。"
-              : state.mood === "thinking"
-                ? "让我想一想…"
+              : state.replyStatus !== "idle" ||
+                  state.voiceInput === "transcribing" ||
+                  state.voiceInput === "recording"
+                ? interactionLabel(state)
                 : reply?.text
                   ? reply.text.slice(0, 150)
                   : `我是${state.settings.nickname}，很高兴在这里遇见你。`}
@@ -91,7 +94,7 @@ export function Pet() {
           >
             <i />
             {state.connection.phase === "connected"
-              ? state.settings.nickname
+              ? interactionLabel(state) || state.settings.nickname
               : "等待连接 MaiBot"}
           </span>
         </div>

@@ -22,6 +22,7 @@ import type { Page, Snapshot } from "../../shared/types";
 import { messageContent } from "../../shared/message-content";
 import { replySpeechText } from "../../shared/speech-text";
 import { MessageAudio } from "../components/ChatAudio";
+import { interactionLabel } from "../../shared/interaction";
 
 export function ChatPage({
   state,
@@ -45,7 +46,7 @@ export function ChatPage({
   });
   useEffect(
     () => bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }),
-    [state.history.length, state.mood],
+    [state.history.length, state.replyStatus, state.voiceInput],
   );
   const send = async () => {
     if (sending || (!text.trim() && !image)) return;
@@ -117,11 +118,7 @@ export function ChatPage({
             </span>
             <span>
               <strong>{state.settings.nickname}</strong>
-              <small>
-                {state.mood === "thinking"
-                  ? "正在想怎么回复你…"
-                  : "每一句，都认真听。"}
-              </small>
+              <small>{interactionLabel(state) || "每一句，都认真听。"}</small>
             </span>
           </div>
           <Status state={state} small />
@@ -229,12 +226,13 @@ export function ChatPage({
               </div>
             ))
           )}
-          {state.mood === "thinking" && (
-            <div className="typing-indicator">
+          {(state.replyStatus !== "idle" ||
+            state.voiceInput === "transcribing") && (
+            <div className="typing-indicator" role="status">
               <span />
               <span />
               <span />
-              <small>{state.settings.nickname}正在思考</small>
+              <small>{interactionLabel(state)}</small>
             </div>
           )}
           <div ref={bottom} />

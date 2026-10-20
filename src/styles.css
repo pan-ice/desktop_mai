@@ -1067,7 +1067,6 @@ kbd {
 }
 .cat-mouth {
   transform-origin: 151px 162px;
-  animation: talk 0.25s ease-in-out infinite alternate;
 }
 .thinking-dots {
   animation: pulse 1.4s infinite;

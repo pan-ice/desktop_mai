@@ -63,6 +63,7 @@ export async function mount(
   model: ImportedModel,
   mood: () => Mood,
   reduced: boolean,
+  mouth: () => number,
 ): Promise<() => void> {
   if (!model.coreUrl) throw new Error("请在角色衣橱中设置一次 Live2D 运行库");
   await ensureCore(model.coreUrl);
@@ -125,21 +126,16 @@ export async function mount(
   };
   densityQuery.addEventListener("change", densityChanged);
   window.addEventListener("resize", resize);
-  let elapsed = 0;
   const internal = avatar.internalModel as Cubism4InternalModel;
   const updateHair = reduced
     ? undefined
     : createHairDynamics(internal.coreModel, Boolean(internal.physics));
   const updateMood = () => {
     updateHair?.(avatar.deltaTime / 1000);
-    elapsed += app.ticker.deltaMS / 1000;
     const core = internal.coreModel as {
       setParameterValueById(id: string, value: number): void;
     };
-    core.setParameterValueById(
-      "ParamMouthOpenY",
-      mood() === "speaking" ? 0.3 + Math.sin(elapsed * 16) * 0.25 : 0,
-    );
+    core.setParameterValueById("ParamMouthOpenY", mouth());
     if (mood() === "sleeping") {
       core.setParameterValueById("ParamEyeLOpen", 0);
       core.setParameterValueById("ParamEyeROpen", 0);

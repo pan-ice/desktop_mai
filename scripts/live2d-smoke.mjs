@@ -833,6 +833,38 @@ try {
             omitBackground: true,
           });
       }
+      // 用实际模型检查跨窗口音频帧到 Cubism 参数的映射，包括真实静音。
+      const playbackId = "385fd5a7-7199-46e8-99dc-2647395badc6";
+      await page.evaluate(
+        (id) => window.mai.reportPlayback({ type: "start", id }),
+        playbackId,
+      );
+      report.audioMouth = [];
+      for (const mouth of [0, 0.7, 0]) {
+        await page.evaluate(
+          ({ id, mouth }) =>
+            window.mai.reportPlayback({ type: "playing", id, mouth }),
+          { id: playbackId, mouth },
+        );
+        await page.waitForTimeout(120);
+        for (const [, target] of targets) await target.evaluate(takeFrames);
+        await page.waitForTimeout(350);
+        for (const [name, target] of targets) {
+          const frames = await target.evaluate(takeFrames);
+          assert.ok(frames.length >= 3);
+          assert.ok(
+            frames.every(
+              (frame) => Math.abs(frame.ParamMouthOpenY - mouth) < 0.01,
+            ),
+            `${name} 应使用实际音频帧 ${mouth}，而非固定口型曲线`,
+          );
+          report.audioMouth.push({ name, mouth, frames: frames.length });
+        }
+      }
+      await page.evaluate(
+        (id) => window.mai.reportPlayback({ type: "end", id }),
+        playbackId,
+      );
       report.motions = {};
       for (const group of report.pet.motionGroups) {
         if (/^idle$/i.test(group)) continue;

@@ -434,7 +434,7 @@ export function SensesPage({ state }: { state: Snapshot }) {
       <div className="settings-columns supplemental-senses">
         <Panel
           title="连续语音聊天"
-          subtitle="打开后自然说话，停顿时自动发送。麦麦回复期间会暂停聆听，避免回声。"
+          subtitle="打开后自然说话，停顿时自动发送。等回复时继续聆听，重新开口可停止当前播报。"
           action={<AudioLines size={19} className="muted" />}
         >
           <p className="model-guide-note">

@@ -9,6 +9,7 @@ import {
 import { Pause, Play, RotateCcw, RotateCw, X } from "lucide-react";
 import { showToast } from "../api";
 import type { Snapshot } from "../../shared/types";
+import { beginPlayback } from "../audio/playback";
 
 type Clip = { id: string; url: string; title: string };
 type Position = { playing: boolean; time: number; duration: number };
@@ -30,6 +31,7 @@ export function ChatAudioProvider({
   children: ReactNode;
 }) {
   const audio = useRef<HTMLAudioElement>(null);
+  const session = useRef<ReturnType<typeof beginPlayback> | null>(null);
   const current = useRef<Clip | null>(null);
   const generation = useRef(0);
   const [clip, setClip] = useState<Clip | null>(null);
@@ -44,6 +46,8 @@ export function ChatAudioProvider({
       });
   };
   const stop = () => {
+    session.current?.end();
+    session.current = null;
     ++generation.current;
     current.current = null;
     const element = audio.current;
@@ -72,10 +76,14 @@ export function ChatAudioProvider({
   useEffect(() => {
     const element = audio.current;
     return () => {
+      session.current?.end();
       ++generation.current;
       element?.pause();
     };
   }, []);
+  useEffect(() => {
+    if (audio.current) audio.current.volume = state.settings.speechVolume;
+  }, [state.settings.speechVolume]);
   const toggle = (next: Clip) => {
     const element = audio.current;
     if (!element) return;
@@ -118,12 +126,37 @@ export function ChatAudioProvider({
         hidden
         data-chat-player
         preload="metadata"
+        crossOrigin="anonymous"
         onLoadedMetadata={updatePosition}
         onDurationChange={updatePosition}
         onTimeUpdate={updatePosition}
-        onPlay={updatePosition}
-        onPause={updatePosition}
-        onEnded={updatePosition}
+        onPlay={() => {
+          session.current?.end();
+          session.current = beginPlayback(() => {
+            audio.current?.pause();
+            updatePosition();
+          });
+          updatePosition();
+        }}
+        onPlaying={() => {
+          if (audio.current) session.current?.playing(audio.current);
+          updatePosition();
+        }}
+        onPause={() => {
+          session.current?.end();
+          session.current = null;
+          updatePosition();
+        }}
+        onEnded={() => {
+          session.current?.end();
+          session.current = null;
+          updatePosition();
+        }}
+        onError={() => {
+          session.current?.end();
+          session.current = null;
+          updatePosition();
+        }}
         onSeeked={updatePosition}
       />
       {children}

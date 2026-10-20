@@ -21,6 +21,7 @@ it("媒体完整响应声明类型、长度及范围能力", async () => {
   expect(response.headers.get("Content-Type")).toBe("audio/mpeg");
   expect(response.headers.get("Content-Length")).toBe("16");
   expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+  expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
 });
 

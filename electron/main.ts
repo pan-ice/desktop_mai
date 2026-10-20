@@ -63,6 +63,12 @@ import {
 import { CREDENTIAL_KEYS } from "../shared/types";
 import { isModelGuideUrl } from "../shared/model-guidance";
 import {
+  idlePlayback,
+  playbackReportSchema,
+  type PlaybackState,
+} from "../shared/playback";
+import { REPLY_WAIT_MS } from "../shared/interaction";
+import {
   fitPetPosition,
   PET_CHARACTER,
   PET_SURFACE,
@@ -133,6 +139,10 @@ let quitting = false;
 let cleanupDone = false;
 let lastInteraction = Date.now();
 let moodTimer: ReturnType<typeof setTimeout> | null = null;
+let replyTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingRequest: string | null = null;
+let playbackOwner: number | null = null;
+let voiceInputOwner: number | null = null;
 let scheduler: ReturnType<typeof setInterval> | null = null;
 let drag: { cursor: Electron.Point; bounds: Electron.Rectangle } | null = null;
 let replyQueue: Promise<void> = Promise.resolve();
@@ -150,6 +160,9 @@ async function observeScreen(now: number) {
     settings.petVisible &&
     bridge.phase === "connected" &&
     !store.state.focusUntil &&
+    store.state.replyStatus === "idle" &&
+    !["recording", "transcribing"].includes(store.state.voiceInput) &&
+    store.state.playback.phase === "idle" &&
     !["thinking", "speaking"].includes(store.state.mood) &&
     !inQuietHours(
       new Date().getHours(),
@@ -401,6 +414,37 @@ function setMood(mood: Mood, resetMs?: number) {
   broadcast();
 }
 
+function clearReplyStatus() {
+  clearTimeout(replyTimer);
+  replyTimer = undefined;
+  pendingRequest = null;
+  store.state.replyStatus = "idle";
+}
+
+function publishPlayback(value: PlaybackState) {
+  const changed =
+    store.state.playback.phase !== value.phase ||
+    store.state.playback.id !== value.id;
+  store.state.playback = value;
+  for (const window of [dashboard, pet])
+    if (window && !window.isDestroyed())
+      window.webContents.send("mai:playback", value);
+  if (changed) {
+    if (value.phase === "playing") setMood("speaking");
+    else if (store.state.mood === "speaking") setMood("idle");
+    else broadcast();
+  }
+}
+
+function stopPlayback() {
+  const id = store.state.playback.id;
+  playbackOwner = null;
+  for (const window of [dashboard, pet])
+    if (window && !window.isDestroyed())
+      window.webContents.send("mai:stop-playback", id);
+  publishPlayback({ ...idlePlayback });
+}
+
 function trusted(sender: Electron.WebContents) {
   return [dashboard?.webContents.id, pet?.webContents.id].includes(sender.id);
 }
@@ -413,6 +457,17 @@ function loadWindow(window: BrowserWindow, view: string) {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  const resetActivity = () => {
+    if (playbackOwner === window.webContents.id) stopPlayback();
+    if (voiceInputOwner === window.webContents.id) {
+      voiceInputOwner = null;
+      store.state.voiceInput = "idle";
+      store.state.conversationActive = false;
+      broadcast();
+    }
+  };
+  window.webContents.on("did-start-loading", resetActivity);
+  window.webContents.on("render-process-gone", resetActivity);
   if (process.env.ELECTRON_RENDERER_URL)
     void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=${view}`);
   else
@@ -584,7 +639,12 @@ async function updateSettings(patch: Partial<Settings>) {
     lastScreenHash = "";
     lastObservation = Date.now();
   }
-  if (parsed.petVisible === false) store.state.conversationActive = false;
+  if (parsed.petVisible === false) {
+    store.state.conversationActive = false;
+    store.state.voiceInput = "idle";
+    voiceInputOwner = null;
+    stopPlayback();
+  }
   await store.save();
   applyPetSettings();
   if ("petPositionLocked" in parsed) updateTrayMenu();
@@ -632,19 +692,32 @@ async function send(input: SendInput, canSend?: () => boolean) {
   if (store.state.history.length > 1000)
     store.state.history.splice(0, store.state.history.length - 1000);
   lastInteraction = Date.now();
-  setMood("thinking", 90000);
+  // 发送成功只说明投递状态；MaiBot 可以选择沉默，客户端不推断生成状态。
+  clearReplyStatus();
+  pendingRequest = message.id;
+  store.state.replyStatus = "sending";
+  if (value.source !== "screen") stopPlayback();
+  broadcast();
   try {
     if (value.source === "proactive")
       await bridge.proactive(value.text, message.id);
     else await bridge.send(value.text, value.image, message.id, value.source);
     message.delivery = "sent";
+    if (pendingRequest === message.id) {
+      store.state.replyStatus = "waiting";
+      replyTimer = setTimeout(() => {
+        if (pendingRequest !== message.id) return;
+        clearReplyStatus();
+        broadcast();
+      }, REPLY_WAIT_MS);
+    }
     await store.save();
     broadcast();
     return true;
   } catch (error) {
     message.delivery =
       error instanceof DeliveryUnknownError ? "unknown" : "failed";
-    setMood("idle");
+    if (pendingRequest === message.id) clearReplyStatus();
     persist();
     throw error;
   }
@@ -1428,7 +1501,28 @@ async function commands(
       if (active && !store.state.settings.petVisible)
         await updateSettings({ petVisible: true });
       store.state.conversationActive = active;
+      if (!active) {
+        store.state.voiceInput = "idle";
+        voiceInputOwner = null;
+      }
       broadcast();
+      return;
+    }
+    case "setVoiceInput": {
+      const phase = z
+        .enum(["idle", "listening", "recording", "transcribing"])
+        .parse(args[0]);
+      if (
+        !window ||
+        (phase === "idle" && voiceInputOwner !== window.webContents.id)
+      )
+        return;
+      if (phase === "listening" && !store.state.conversationActive) return;
+      voiceInputOwner = phase === "idle" ? null : window.webContents.id;
+      if (store.state.voiceInput !== phase) {
+        store.state.voiceInput = phase;
+        broadcast();
+      }
       return;
     }
     case "setMood":
@@ -1443,6 +1537,11 @@ async function commands(
       const minutes = z.number().min(0).max(180).parse(args[0]);
       store.state.focusUntil = minutes ? Date.now() + minutes * 60000 : null;
       if (minutes) store.state.conversationActive = false;
+      if (minutes) {
+        store.state.voiceInput = "idle";
+        voiceInputOwner = null;
+        stopPlayback();
+      }
       setMood(minutes ? "sleeping" : "idle");
       activity(minutes ? `开始 ${minutes} 分钟专注陪伴` : "专注已结束");
       return;
@@ -1490,6 +1589,7 @@ app.on("before-quit", (event) => {
   if (voiceStatusTimer) clearTimeout(voiceStatusTimer);
   voiceStatusAbort.abort();
   if (moodTimer) clearTimeout(moodTimer);
+  clearTimeout(replyTimer);
   qqLogin = null;
   accountClient.close();
   const disconnected = bridge.disconnect(false);
@@ -1630,6 +1730,36 @@ void app
       )
         pet?.setIgnoreMouseEvents(!value, { forward: true });
     });
+    ipcMain.on("mai:playback-report", (event, raw: unknown) => {
+      if (!trusted(event.sender)) return;
+      const parsed = playbackReportSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const report = parsed.data;
+      if (report.type === "start") {
+        if (playbackOwner !== null && store.state.playback.id)
+          [dashboard, pet]
+            .find((window) => window?.webContents.id === playbackOwner)
+            ?.webContents.send("mai:stop-playback", store.state.playback.id);
+        playbackOwner = event.sender.id;
+        publishPlayback({ id: report.id, phase: "preparing", mouth: 0 });
+      } else if (
+        playbackOwner === event.sender.id &&
+        store.state.playback.id === report.id
+      ) {
+        if (report.type === "end") {
+          playbackOwner = null;
+          publishPlayback({ ...idlePlayback });
+        } else
+          publishPlayback({
+            id: report.id,
+            phase: "playing",
+            mouth: report.mouth,
+          });
+      }
+    });
+    ipcMain.on("mai:stop-playback", (event) => {
+      if (trusted(event.sender)) stopPlayback();
+    });
     bridge.on("status", (status: Snapshot["connection"]) => {
       ++historyEpoch;
       if (
@@ -1660,7 +1790,13 @@ void app
         void syncCloudHistory().catch(() =>
           activity("服务器聊天记录同步失败，可重新连接后重试", "error"),
         );
-      if (status.phase !== "connected") store.state.conversationActive = false;
+      if (status.phase !== "connected") {
+        store.state.conversationActive = false;
+        store.state.voiceInput = "idle";
+        voiceInputOwner = null;
+        clearReplyStatus();
+        stopPlayback();
+      }
       activity(status.detail);
       if (status.phase !== "connected") setMood("idle");
     });
@@ -1724,7 +1860,7 @@ void app
           });
           if (history.length > 1000) history.splice(0, history.length - 1000);
           lastInteraction = Date.now();
-          setMood("happy", 10000);
+          clearReplyStatus();
           await store.save();
           broadcast();
           acknowledge();

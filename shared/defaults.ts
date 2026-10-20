@@ -1,4 +1,5 @@
 import type { Settings, Snapshot } from "./types";
+import { idlePlayback } from "./playback";
 
 export const defaultSettings: Settings = {
   nickname: "麦麦",
@@ -90,6 +91,9 @@ export function emptySnapshot(desktop = false): Snapshot {
     mood: "idle",
     focusUntil: null,
     conversationActive: false,
+    voiceInput: "idle",
+    replyStatus: "idle",
+    playback: { ...idlePlayback },
     desktop,
     version: "0.4.0",
   };

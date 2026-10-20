@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ImportedModel, Mood } from "../../shared/types";
+import { mouthOpen, usePlaybackActivity } from "../audio/playback";
 
 interface Props {
   model?: ImportedModel;
   mood: Mood;
   reducedMotion?: boolean;
   interactive?: boolean;
+  speech?: boolean;
 }
 
 export function Avatar(props: Props) {
@@ -27,7 +29,10 @@ function AvatarContent({
   mood,
   reducedMotion,
   interactive = false,
+  speech = true,
 }: Props) {
+  usePlaybackActivity();
+  const mouth = speech ? mouthOpen(mood) : 0;
   const [failure, setFailure] = useState("");
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef(mood);
@@ -55,6 +60,7 @@ function AvatarContent({
         model,
         () => latest.current,
         Boolean(reducedMotion),
+        () => (speech ? mouthOpen(latest.current) : 0),
       );
       if (cancelled) result();
       else dispose = result;
@@ -67,7 +73,7 @@ function AvatarContent({
       cancelled = true;
       dispose?.();
     };
-  }, [model?.id, model?.kind, model?.coreUrl, reducedMotion]);
+  }, [model?.id, model?.kind, model?.coreUrl, reducedMotion, speech]);
 
   if (model) {
     if (failure)
@@ -78,10 +84,11 @@ function AvatarContent({
         </div>
       );
     if (model.kind === "image" || model.kind === "pngtuber") {
-      const speaking = mood === "speaking";
+      const speaking = mouth > 0.1;
       return (
         <div
           className={`imported-avatar mood-${mood} ${reducedMotion ? "still" : ""}`}
+          data-mouth-open={mouth.toFixed(3)}
         >
           <img
             draggable={false}
@@ -94,11 +101,19 @@ function AvatarContent({
         </div>
       );
     }
-    return <div className="model-canvas" ref={host} aria-label={model.name} />;
+    return (
+      <div
+        className="model-canvas"
+        ref={host}
+        aria-label={model.name}
+        data-mouth-open={mouth.toFixed(3)}
+      />
+    );
   }
   return (
     <div
       className={`placeholder-avatar mood-${mood} ${reducedMotion ? "still" : ""} ${interactive ? "touchable" : ""}`}
+      data-mouth-open={mouth.toFixed(3)}
     >
       <svg viewBox="0 0 300 300" role="img" aria-label="等待导入角色的麦麦小猫">
         <defs>
@@ -206,13 +221,13 @@ function AvatarContent({
             opacity=".55"
           />
           <path d="M146 150 Q151 147 156 150 L151 155Z" fill="#bd9486" />
-          {mood === "speaking" ? (
+          {mouth > 0 || mood === "speaking" ? (
             <ellipse
               className="cat-mouth"
               cx="151"
               cy="163"
               rx="6"
-              ry="8"
+              ry={1 + mouth * 8}
               fill="#ad7c75"
             />
           ) : (

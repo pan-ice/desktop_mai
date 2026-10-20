@@ -64,7 +64,11 @@ export function ModelsPage({ state }: { state: Snapshot }) {
           className={`model-card ${!state.settings.activeModelId ? "chosen" : ""}`}
         >
           <div className="model-card-preview placeholder">
-            <Avatar mood="idle" reducedMotion={state.settings.reducedMotion} />
+            <Avatar
+              mood="idle"
+              reducedMotion={state.settings.reducedMotion}
+              speech={false}
+            />
             <span className="model-type">占位角色</span>
           </div>
           <div className="model-card-details">

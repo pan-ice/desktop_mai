@@ -26,6 +26,7 @@ import { SensesPage } from "./pages/SensesPage";
 import { CorePage } from "./pages/CorePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import type { Page, Snapshot } from "../shared/types";
+import { interactionLabel } from "../shared/interaction";
 
 const navigation = [
   { id: "home", name: "此刻", icon: Home, note: "HOME" },
@@ -99,7 +100,7 @@ export function App() {
               <strong>MaiBot 内核</strong>
               <small>
                 {state.connection.phase === "connected"
-                  ? "已连接 · 记忆持续生长中"
+                  ? "已连接 · 可以聊天了"
                   : "等待你的麦麦上线"}
               </small>
             </span>
@@ -289,13 +290,10 @@ function HomePage({
             <h2>
               {state.settings.nickname}
               <span>
-                {state.focusUntil
-                  ? "专注陪伴中"
-                  : state.mood === "thinking"
-                    ? "正在思考"
-                    : state.connection.phase === "connected"
-                      ? "在这里，陪着你"
-                      : "准备好陪伴你"}
+                {interactionLabel(state) ||
+                  (state.connection.phase === "connected"
+                    ? "在这里，陪着你"
+                    : "准备好陪伴你")}
               </span>
             </h2>
             <p>

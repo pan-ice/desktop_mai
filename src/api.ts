@@ -83,6 +83,14 @@ function previewApi(): DesktopApi {
     cloneVoice: unsupported,
     queryVoice: unsupported,
     voiceConversation: unsupported,
+    setVoiceInput: async (phase) => {
+      local.voiceInput = phase;
+      emit();
+    },
+    reportPlayback: () => {},
+    onPlayback: () => () => {},
+    stopPlayback: () => {},
+    onStopPlayback: () => () => {},
     setMood: async (mood) => {
       local.mood = mood;
       emit();

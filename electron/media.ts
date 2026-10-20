@@ -81,6 +81,8 @@ export async function mediaResponse(
     "Content-Type": mediaTypes[file.slice(file.lastIndexOf(".") + 1)],
     "Content-Length": String(size),
     "Accept-Ranges": "bytes",
+    // 仅服务已校验的本机媒体；Web Audio 采样跨 scheme 的声音需要 CORS。
+    "Access-Control-Allow-Origin": "*",
   });
   let start = 0,
     end = size - 1,

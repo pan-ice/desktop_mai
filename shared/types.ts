@@ -4,6 +4,8 @@ import type {
   QQLoginChallenge,
 } from "./accounts";
 import type { MessagePart } from "./message-content";
+import type { PlaybackReport, PlaybackState } from "./playback";
+import type { VoiceInputPhase } from "./interaction";
 import type {
   ClonedVoice,
   TtsProfile,
@@ -160,6 +162,9 @@ export interface Snapshot {
   mood: Mood;
   focusUntil: number | null;
   conversationActive: boolean;
+  voiceInput: VoiceInputPhase;
+  replyStatus: "idle" | "sending" | "waiting";
+  playback: PlaybackState;
   desktop: boolean;
   version: string;
 }
@@ -219,6 +224,11 @@ export interface DesktopApi {
   cloneVoice(input: VoiceCloneInput): Promise<ClonedVoice>;
   queryVoice(id: string): Promise<ClonedVoice>;
   voiceConversation(active: boolean): Promise<void>;
+  setVoiceInput(phase: VoiceInputPhase): Promise<void>;
+  reportPlayback(report: PlaybackReport): void;
+  onPlayback(callback: (state: PlaybackState) => void): () => void;
+  stopPlayback(): void;
+  onStopPlayback(callback: (id: string | null) => void): () => void;
   setMood(mood: Mood): Promise<void>;
   focus(minutes: number): Promise<void>;
   showPet(): Promise<void>;

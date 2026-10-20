@@ -3,6 +3,7 @@ import { api, showToast } from "../api";
 import { replySpeechText, speechSegments } from "../../shared/speech-text";
 import { ttsProfile } from "../../shared/tts";
 import type { Settings, Snapshot } from "../../shared/types";
+import { beginPlayback, interruptPlayback } from "../audio/playback";
 
 export function useRecorder(onText: (text: string) => Promise<void> | void) {
   const [recording, setRecording] = useState(false);
@@ -21,6 +22,7 @@ export function useRecorder(onText: (text: string) => Promise<void> | void) {
       clearTimeout(timeout.current);
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
+      void api.setVoiceInput("idle");
     };
   }, []);
   const toggle = async () => {
@@ -31,6 +33,7 @@ export function useRecorder(onText: (text: string) => Promise<void> | void) {
     if (busy.current) return;
     busy.current = true;
     try {
+      interruptPlayback();
       const media = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
         video: false,
@@ -65,6 +68,7 @@ export function useRecorder(onText: (text: string) => Promise<void> | void) {
         }
         setRecording(false);
         setProcessing(true);
+        void api.setVoiceInput("transcribing");
         void (async () => {
           try {
             const blob = new Blob(chunks, { type: mime });
@@ -80,16 +84,19 @@ export function useRecorder(onText: (text: string) => Promise<void> | void) {
           } finally {
             busy.current = false;
             if (alive.current) setProcessing(false);
+            void api.setVoiceInput("idle");
           }
         })();
       };
       input.start();
       setRecording(true);
+      void api.setVoiceInput("recording");
       timeout.current = setTimeout(() => {
         if (input.state === "recording") input.stop();
       }, 45000);
     } catch (error) {
       busy.current = false;
+      void api.setVoiceInput("idle");
       stream.current?.getTracks().forEach((track) => track.stop());
       stream.current = null;
       showToast(error instanceof Error ? error.message : String(error), true);
@@ -101,6 +108,7 @@ export function useRecorder(onText: (text: string) => Promise<void> | void) {
 let currentAudio: HTMLAudioElement | null = null;
 let playbackGeneration = 0;
 let cancelPlayback: (() => void) | null = null;
+let speechPlayback: ReturnType<typeof beginPlayback> | null = null;
 export function stopSpeech(clearQueue = true) {
   ++playbackGeneration;
   cancelPlayback?.();
@@ -108,8 +116,9 @@ export function stopSpeech(clearQueue = true) {
   speechSynthesis.cancel();
   currentAudio?.pause();
   currentAudio = null;
-  void api.setMood("idle");
-  if (clearQueue) window.dispatchEvent(new Event("mai:stop-speech"));
+  speechPlayback?.end();
+  speechPlayback = null;
+  if (clearQueue) interruptPlayback();
 }
 
 export async function speak(
@@ -139,12 +148,17 @@ export async function speak(
     const ended = new Promise<void>((resolve) => {
       complete = resolve;
     });
+    const playback = beginPlayback(() => {
+      if (generation === playbackGeneration) stopSpeech(false);
+    });
+    speechPlayback = playback;
     cancelPlayback = complete;
     const finish = () => {
       complete();
+      playback.end();
       if (generation === playbackGeneration) {
         cancelPlayback = null;
-        void api.setMood("idle");
+        speechPlayback = null;
       }
     };
     try {
@@ -161,6 +175,7 @@ export async function speak(
         const url = result.url;
         if (generation !== playbackGeneration || !url) return;
         const audio = new Audio(url);
+        audio.crossOrigin = "anonymous";
         currentAudio = audio;
         audio.volume = settings.speechVolume;
         if (
@@ -176,9 +191,13 @@ export async function speak(
           finish();
           showToast("语音无法播放，请检查音频输出设备", true);
         };
-        await api.setMood("speaking");
         if (generation !== playbackGeneration) return;
         await audio.play();
+        if (generation !== playbackGeneration) {
+          audio.pause();
+          return;
+        }
+        playback.playing(audio);
         if (
           !dataUrl &&
           settings.ttsPreloadNext &&
@@ -197,7 +216,7 @@ export async function speak(
           voices.find((voice) => voice.lang.startsWith("zh")) ||
           null;
         utterance.onstart = () => {
-          void api.setMood("speaking");
+          if (generation === playbackGeneration) playback.playing();
         };
         utterance.onend = finish;
         utterance.onerror = (event) => {
@@ -248,12 +267,23 @@ export function useSpeechReplies(state: Snapshot) {
     }
     if (seen.current.size > 2000)
       seen.current = new Set(state.history.map((message) => message.id));
-    if (playing.current || !queue.current.length) return;
+    if (
+      playing.current ||
+      !queue.current.length ||
+      state.voiceInput === "recording" ||
+      state.voiceInput === "transcribing"
+    )
+      return;
     playing.current = true;
     void (async () => {
       try {
         while (queue.current.length) {
           const snapshot = current.current;
+          if (
+            snapshot.voiceInput === "recording" ||
+            snapshot.voiceInput === "transcribing"
+          )
+            break;
           if (
             (!snapshot.settings.voiceEnabled && !snapshot.conversationActive) ||
             snapshot.focusUntil
@@ -273,6 +303,7 @@ export function useSpeechReplies(state: Snapshot) {
     state.settings,
     state.focusUntil,
     state.conversationActive,
+    state.voiceInput,
   ]);
   useEffect(() => {
     if (

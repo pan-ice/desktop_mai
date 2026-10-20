@@ -10,6 +10,7 @@ export async function mount(
   model: ImportedModel,
   mood: () => Mood,
   reduced: boolean,
+  mouth: () => number,
 ): Promise<() => void> {
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
@@ -124,10 +125,7 @@ export async function mount(
     if (!reduced)
       avatar.position.y = baseY + Math.sin(time * 1.7) * size.y * 0.004;
     if (vrm) {
-      vrm.expressionManager?.setValue(
-        "aa",
-        mood() === "speaking" ? 0.25 + Math.sin(time * 15) * 0.2 : 0,
-      );
+      vrm.expressionManager?.setValue("aa", mouth());
       vrm.expressionManager?.setValue("happy", mood() === "happy" ? 0.6 : 0);
       vrm.expressionManager?.setValue(
         "blink",
@@ -143,9 +141,7 @@ export async function mount(
     for (const morph of morphs) {
       const values = morph.mesh.morphTargetInfluences;
       if (!values) continue;
-      if (morph.mouth !== undefined)
-        values[morph.mouth] =
-          mood() === "speaking" ? 0.3 + Math.sin(time * 15) * 0.2 : 0;
+      if (morph.mouth !== undefined) values[morph.mouth] = mouth();
       if (morph.happy !== undefined)
         values[morph.happy] = mood() === "happy" ? 0.65 : 0;
       if (morph.blink !== undefined)
