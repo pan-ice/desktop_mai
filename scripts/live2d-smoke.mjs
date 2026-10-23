@@ -11,6 +11,7 @@ import { createServer } from "node:net";
 import { once } from "node:events";
 import { dirname, join, resolve, sep } from "node:path";
 import assert from "node:assert/strict";
+import { pathToFileURL } from "node:url";
 
 if (!process.argv[2])
   throw new Error(
@@ -33,6 +34,16 @@ if (corePath) await access(corePath);
 const base = resolve(".cache/live2d-smoke");
 await mkdir(base, { recursive: true });
 const userData = await mkdtemp(join(base, "userdata-"));
+const hidden = process.argv.includes("--hidden");
+const bootstrap = join(userData, "bootstrap.mjs");
+if (hidden)
+  await writeFile(
+    bootstrap,
+    `import { BrowserWindow } from 'electron';
+BrowserWindow.prototype.show = function () {};
+BrowserWindow.prototype.showInactive = function () {};
+await import(${JSON.stringify(pathToFileURL(resolve("out/main/index.js")).href)});`,
+  );
 const probe = createServer();
 probe.listen(0, "127.0.0.1");
 await once(probe, "listening");
@@ -109,7 +120,8 @@ function modelStats() {
   );
   if (!app) return { ready: false };
   const avatar = app.stage.children[0];
-  const pixels = app.renderer.extract.pixels(avatar);
+  app.render();
+  const pixels = app.renderer.extract.pixels();
   let visiblePixels = 0;
   for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) visiblePixels++;
   return {
@@ -356,7 +368,7 @@ try {
   desktop = await electron.launch({
     executablePath: resolve("node_modules/electron/dist/electron.exe"),
     args: [
-      ".",
+      hidden ? bootstrap : ".",
       "--disable-renderer-backgrounding",
       "--disable-background-timer-throttling",
       "--disable-features=CalculateNativeWinOcclusion",
@@ -370,6 +382,14 @@ try {
   });
   await desktop.firstWindow();
   const context = desktop.context();
+  const windowDeadline = Date.now() + 15000;
+  while (
+    Date.now() < windowDeadline &&
+    !["view=dashboard", "view=pet"].every((view) =>
+      context.pages().some((page) => page.url().includes(view)),
+    )
+  )
+    await new Promise((done) => setTimeout(done, 40));
   const page = context
     .pages()
     .find((value) => value.url().includes("view=dashboard"));
@@ -384,6 +404,14 @@ try {
     ["pet", pet],
   ];
   for (const [name, target] of targets) {
+    if (hidden) {
+      await target.addInitScript(() =>
+        Object.defineProperty(document, "hidden", { get: () => false }),
+      );
+      await target.evaluate(() =>
+        Object.defineProperty(document, "hidden", { get: () => false }),
+      );
+    }
     target.on("pageerror", (error) => errors.push(`${name}: ${error.message}`));
     target.on("console", (message) => {
       if (message.type() === "error")
@@ -598,6 +626,20 @@ try {
       filePaths: [file],
     });
   }, replacementCore);
+  await assert.rejects(
+    page.evaluate(() => window.mai.importLive2DCore()),
+    /校验/,
+    "本地修改的运行库不能自动获得脚本执行权限",
+  );
+  await desktop.evaluate(
+    ({ net }, { url, source }) => {
+      const original = net.fetch.bind(net);
+      net.fetch = async (input, options) =>
+        String(input) === url ? new Response(source) : original(input, options);
+    },
+    { url: coreDownloadUrl, source: await readFile(replacementCore, "utf8") },
+  );
+  await page.evaluate(() => window.mai.downloadLive2DCore());
   assert.equal(await page.evaluate(() => window.mai.importLive2DCore()), true);
   state = await page.evaluate(() => window.mai.snapshot());
   assert.notEqual(state.models[0].coreUrl, previousCoreUrl);
@@ -695,12 +737,27 @@ try {
       assertHairDynamics(report.hair);
     }
     report.resolutions = [];
+    const waitForDensity = () =>
+      pet.waitForFunction(
+        () => {
+          const canvas = document.querySelector(".model-canvas canvas");
+          if (!canvas) return false;
+          const bounds = canvas.getBoundingClientRect();
+          return (
+            canvas.width + 1 >= bounds.width * devicePixelRatio &&
+            canvas.height + 1 >= bounds.height * devicePixelRatio
+          );
+        },
+        undefined,
+        { timeout: 5000 },
+      );
     for (const petScale of [1, 1.6, 0.75, 1]) {
       await page.evaluate(
         (value) => window.mai.updateSettings({ petScale: value }),
         petScale,
       );
       await page.waitForTimeout(250);
+      await waitForDensity();
       const resolution = await pet.evaluate(() => {
         const canvas = document.querySelector(".model-canvas canvas");
         const bounds = canvas.getBoundingClientRect();
@@ -742,6 +799,7 @@ try {
             petScale,
           );
           await page.waitForTimeout(250);
+          await waitForDensity();
           report.resolutions.push({
             petScale,
             ...(await pet.evaluate(() => {
@@ -781,6 +839,25 @@ try {
       process.exitCode = 0;
     } else {
       report.samples = {};
+      // Native hidden windows can render at 1 FPS even with timer throttling
+      // disabled. Keep the same frame/value assertions and wait for samples.
+      const waitForHiddenFrames = async (count) => {
+        if (!hidden) return;
+        await Promise.all(
+          targets.map(([, target]) =>
+            target.waitForFunction(
+              (value) => {
+                const app = window.__live2dTestApps.findLast(
+                  (candidate) => candidate.stage?.children.length,
+                );
+                return app?.__frames?.length >= value;
+              },
+              count,
+              { polling: 100, timeout: 10000 },
+            ),
+          ),
+        );
+      };
       for (const mood of ["idle", "speaking", "sleeping", "idle"]) {
         await page.evaluate((value) => window.mai.setMood(value), mood);
         for (const [, target] of targets) {
@@ -794,6 +871,7 @@ try {
           await target.evaluate(takeFrames);
         }
         await page.waitForTimeout(1400);
+        await waitForHiddenFrames(5);
         for (const [name, target] of targets) {
           const frames = await target.evaluate(takeFrames);
           report.samples[
@@ -849,6 +927,7 @@ try {
         await page.waitForTimeout(120);
         for (const [, target] of targets) await target.evaluate(takeFrames);
         await page.waitForTimeout(350);
+        await waitForHiddenFrames(3);
         for (const [name, target] of targets) {
           const frames = await target.evaluate(takeFrames);
           assert.ok(frames.length >= 3);

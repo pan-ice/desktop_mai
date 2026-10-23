@@ -244,13 +244,21 @@ export function useSpeechReplies(state: Snapshot) {
   current.current = state;
   const started = useRef(Date.now());
   useEffect(() => {
+    const liveReplies = new Map(
+      state.liveReplies.map((reply) => [reply.id, reply.receivedAt]),
+    );
     for (const reply of state.history) {
-      if (reply.role !== "assistant" || seen.current.has(reply.id)) continue;
+      if (
+        reply.role !== "assistant" ||
+        !liveReplies.has(reply.id) ||
+        seen.current.has(reply.id)
+      )
+        continue;
       seen.current.add(reply.id);
       if (
         (state.settings.voiceEnabled || state.conversationActive) &&
         !state.focusUntil &&
-        reply.timestamp >= started.current &&
+        liveReplies.get(reply.id)! >= started.current &&
         (reply.text || reply.attachments?.some((item) => item.type === "audio"))
       ) {
         const voices =
@@ -265,8 +273,13 @@ export function useSpeechReplies(state: Snapshot) {
         }
       }
     }
-    if (seen.current.size > 2000)
-      seen.current = new Set(state.history.map((message) => message.id));
+    if (seen.current.size > 2000) {
+      const retained = new Set(state.history.map((message) => message.id));
+      // 仅同步到的历史还没被消费，不能在清理去重记录时提前标记。
+      seen.current = new Set(
+        [...seen.current].filter((id) => retained.has(id)),
+      );
+    }
     if (
       playing.current ||
       !queue.current.length ||
@@ -300,6 +313,7 @@ export function useSpeechReplies(state: Snapshot) {
     })();
   }, [
     state.history,
+    state.liveReplies,
     state.settings,
     state.focusUntil,
     state.conversationActive,

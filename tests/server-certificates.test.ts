@@ -21,6 +21,22 @@ async function directory() {
 }
 
 describe("自定义 WSS 证书存储", () => {
+  it("主机达到上限时拒绝新增，允许替换，重启后原证书全部保留", async () => {
+    const root = await directory();
+    const store = new ServerCertificateStore(root);
+    const certificate = Buffer.from(TEST_CERTIFICATE);
+    for (let index = 0; index < 32; index++)
+      await store.install(`wss://host-${index}.example/desktop`, certificate);
+    await expect(
+      store.install("wss://overflow.example/desktop", certificate),
+    ).rejects.toThrow("32");
+    await store.install("wss://host-0.example/desktop", certificate);
+    const restored = new ServerCertificateStore(root);
+    await restored.load();
+    expect(restored.list()).toHaveLength(32);
+    expect(restored.list()).toEqual(store.list());
+  });
+
   it("按主机保存证书链，允许同主机不同路径与端口，重启后仍可读取", async () => {
     const root = await directory();
     const store = new ServerCertificateStore(root);

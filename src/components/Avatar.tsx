@@ -47,6 +47,11 @@ function AvatarContent({
       model.kind === "pngtuber"
     )
       return;
+    // 每次加载只操作自己的挂载点；过期异步任务不能替换新渲染器的画布。
+    const mountPoint = document.createElement("div");
+    mountPoint.style.width = "100%";
+    mountPoint.style.height = "100%";
+    element.append(mountPoint);
     let cancelled = false;
     let dispose: (() => void) | undefined;
     const load = async () => {
@@ -56,7 +61,7 @@ function AvatarContent({
           : await import("../renderers/three");
       if (cancelled) return;
       const result = await module.mount(
-        element,
+        mountPoint,
         model,
         () => latest.current,
         Boolean(reducedMotion),
@@ -71,6 +76,7 @@ function AvatarContent({
     });
     return () => {
       cancelled = true;
+      mountPoint.remove();
       dispose?.();
     };
   }, [model?.id, model?.kind, model?.coreUrl, reducedMotion, speech]);

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
@@ -28,6 +36,69 @@ afterEach(async () => {
 });
 
 describe("可复用的 Live2D 运行库", () => {
+  it("重复设置相同版本直接复用缓存，不替换可能正在加载的运行库文件", async () => {
+    const root = await folder();
+    const core = await downloadLive2DCore(
+      root,
+      async () => new Response(coreSource),
+    );
+    const source = join(root, "same-core.js");
+    await writeFile(source, coreSource);
+    const modified = new Date("2020-01-01T00:00:00Z");
+    await utimes(core.file, modified, modified);
+    expect(await installLive2DCore(root, source)).toEqual(core);
+    expect((await stat(core.file)).mtimeMs).toBe(modified.getTime());
+    await downloadLive2DCore(root, async () => new Response(coreSource));
+    expect((await stat(core.file)).mtimeMs).toBe(modified.getTime());
+  });
+
+  it("旧运行库的本地导入和归档下载均校验固定摘要，不覆盖现代运行库", async () => {
+    const root = await folder();
+    const modern = await downloadLive2DCore(
+      root,
+      async () => new Response(coreSource),
+    );
+    const legacy =
+      "/* Live2DModelWebGL Live2DMotion */ globalThis.untrusted = true;";
+    const file = join(root, "legacy.js");
+    await writeFile(file, legacy);
+    await expect(installLive2DCore(root, file)).rejects.toThrow(
+      "归档 SHA-256 校验",
+    );
+    await expect(
+      downloadLive2DCore(root, async () => new Response(legacy), "legacy"),
+    ).rejects.toThrow("归档摘要校验失败");
+    expect(await findLive2DCore(root, "legacy")).toBeUndefined();
+    expect(await findLive2DCore(root)).toEqual(modern);
+  });
+  it("拒绝仅伪造 Core 标记的本地脚本，也不从旧角色自动信任它", async () => {
+    const root = await folder();
+    const modelsRoot = join(root, "models");
+    const oldModel = join(modelsRoot, randomUUID());
+    const source = join(oldModel, LIVE2D_CORE_FILE);
+    await mkdir(oldModel, { recursive: true });
+    await writeFile(
+      source,
+      "/* Live2DCubismCore csmGetVersion */ globalThis.untrustedCore = true;",
+    );
+    await expect(installLive2DCore(modelsRoot, source)).rejects.toThrow("校验");
+    expect(await findLive2DCore(modelsRoot)).toBeUndefined();
+  });
+
+  it("已有运行库被替换后不会继续报告就绪", async () => {
+    const root = await folder();
+    const modelsRoot = join(root, "models");
+    const core = await downloadLive2DCore(
+      modelsRoot,
+      async () => new Response(coreSource),
+    );
+    await writeFile(
+      core.file,
+      `${coreSource}\nglobalThis.untrustedCore = true;`,
+    );
+    expect(await findLive2DCore(modelsRoot)).toBeUndefined();
+  });
+
   it("只有模型没有 Core 时从官方地址下载，保存后可离线复用", async () => {
     const root = await folder();
     const modelsRoot = join(root, "models");
@@ -72,19 +143,27 @@ describe("可复用的 Live2D 运行库", () => {
     const modelsRoot = join(root, "models");
     const source = join(root, "core.js");
     await writeFile(source, coreSource);
-    const installed = await installLive2DCore(modelsRoot, source);
+    const installed = await downloadLive2DCore(
+      modelsRoot,
+      async () => new Response(coreSource),
+    );
     await expect(downloadLive2DCore(modelsRoot, request)).rejects.toThrow(
       "检查网络或系统代理后重试",
     );
     expect(await findLive2DCore(modelsRoot)).toEqual(installed);
   });
 
-  it("从旧版角色中恢复 Core，移除旧角色后运行库仍保留", async () => {
+  it("只从旧版角色中恢复已验证的 Core，移除旧角色后仍可使用", async () => {
     const root = await folder();
     const modelsRoot = join(root, "models");
     const oldModel = join(modelsRoot, randomUUID());
     await mkdir(oldModel, { recursive: true });
     await writeFile(join(oldModel, LIVE2D_CORE_FILE), coreSource);
+    const downloaded = await downloadLive2DCore(
+      modelsRoot,
+      async () => new Response(coreSource),
+    );
+    await rm(downloaded.file);
 
     const core = await findLive2DCore(modelsRoot);
     expect(core).toBeDefined();
@@ -98,8 +177,17 @@ describe("可复用的 Live2D 运行库", () => {
     const modelsRoot = join(root, "models");
     const source = join(root, "core.js");
     await writeFile(source, coreSource);
-    const first = await installLive2DCore(modelsRoot, source);
+    const first = await downloadLive2DCore(
+      modelsRoot,
+      async () => new Response(coreSource),
+    );
     await writeFile(source, `${coreSource}\n// updated runtime`);
+    await expect(installLive2DCore(modelsRoot, source)).rejects.toThrow("校验");
+    expect(await findLive2DCore(modelsRoot)).toEqual(first);
+    await downloadLive2DCore(
+      modelsRoot,
+      async () => new Response(`${coreSource}\n// updated runtime`),
+    );
     const updated = await installLive2DCore(modelsRoot, source);
     expect(live2dCoreUrl(updated)).not.toBe(live2dCoreUrl(first));
 

@@ -74,6 +74,7 @@ export function emptySnapshot(desktop = false): Snapshot {
       since: Date.now(),
     },
     history: [],
+    liveReplies: [],
     historySync: {
       enabled: false,
       loading: false,
@@ -83,8 +84,10 @@ export function emptySnapshot(desktop = false): Snapshot {
     models: [],
     clonedVoices: [],
     live2dCoreReady: false,
+    live2dLegacyReady: false,
     live2dCoreDownloading: false,
     live2dCoreError: "",
+    live2dCoreErrorRuntime: "modern",
     removedServerAccounts: [],
     serverCertificates: [],
     activity: [],

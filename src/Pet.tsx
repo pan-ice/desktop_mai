@@ -49,19 +49,6 @@ export function Pet() {
       api.petDrag("end");
     }
   }, [state.settings.petPositionLocked]);
-  useEffect(() => {
-    const move = (event: MouseEvent) =>
-      api.petInteractive(
-        Boolean((event.target as Element)?.closest("[data-pet-interactive]")),
-      );
-    const reset = () => api.petInteractive(false);
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseleave", reset);
-    return () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseleave", reset);
-    };
-  }, []);
   const submit = async () => {
     if (!text.trim()) return;
     stopSpeech();
@@ -74,7 +61,7 @@ export function Pet() {
       style={{ ...PET_SURFACE, zoom: state.settings.petScale }}
     >
       {bubble && (
-        <div className="pet-bubble" data-pet-interactive>
+        <div className="pet-bubble">
           <button aria-label="关闭气泡" onClick={() => setBubble(false)}>
             <X size={12} />
           </button>
@@ -99,7 +86,7 @@ export function Pet() {
           </span>
         </div>
       )}
-      <div className="pet-toolbar" data-pet-interactive>
+      <div className="pet-toolbar">
         <button
           title="陪伴空间"
           aria-label="打开陪伴空间"
@@ -160,7 +147,6 @@ export function Pet() {
             ? "位置已锁定，可点击锁按钮解锁"
             : "拖动角色调整位置"
         }
-        data-pet-interactive
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           pointer.current = {
@@ -204,7 +190,7 @@ export function Pet() {
           interactive
         />
       </div>
-      <div className="pet-controls" data-pet-interactive>
+      <div className="pet-controls">
         <button
           className={chat ? "selected" : ""}
           title="聊聊天"
@@ -265,7 +251,6 @@ export function Pet() {
       {chat && (
         <form
           className="pet-composer"
-          data-pet-interactive
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
@@ -288,7 +273,6 @@ export function Pet() {
       )}
       <button
         className={`pet-live ${state.conversationActive ? "listening" : ""}`}
-        data-pet-interactive
         title={state.conversationActive ? "结束连续语音" : "开启连续语音"}
         aria-label={state.conversationActive ? "结束连续语音" : "开启连续语音"}
         onClick={() => {

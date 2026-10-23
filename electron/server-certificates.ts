@@ -8,6 +8,7 @@ import type { ServerCertificateInfo } from "../shared/types";
 const MAX_IMPORT_SIZE = 256 * 1024;
 const MAX_STORE_SIZE = 4 * 1024 * 1024;
 const MAX_CERTIFICATES = 16;
+const MAX_HOSTS = 32;
 const CERTIFICATE_PATTERN =
   /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
 const PRIVATE_KEY_PATTERN = /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/;
@@ -25,7 +26,7 @@ const storedSchema = z
           })
           .strict(),
       )
-      .max(32),
+      .max(MAX_HOSTS),
   })
   .strict();
 
@@ -188,13 +189,20 @@ export class ServerCertificateStore {
   }
 
   private async persist(records: Map<string, StoredRecord>): Promise<void> {
+    if (records.size > MAX_HOSTS)
+      throw new Error(
+        `最多保存 ${MAX_HOSTS} 个证书主机，请先移除不再使用的证书`,
+      );
+    const content = JSON.stringify(
+      storedSchema.parse({ version: 1, records: [...records.values()] }),
+      null,
+      2,
+    );
+    if (Buffer.byteLength(content, "utf8") > MAX_STORE_SIZE)
+      throw new Error("自定义证书存储文件过大，请先移除不再使用的证书");
     await mkdir(this.directory, { recursive: true });
     const target = this.file;
-    await writeFile(
-      `${target}.tmp`,
-      JSON.stringify({ version: 1, records: [...records.values()] }, null, 2),
-      "utf8",
-    );
+    await writeFile(`${target}.tmp`, content, "utf8");
     await rename(`${target}.tmp`, target);
   }
 }

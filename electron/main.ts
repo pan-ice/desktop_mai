@@ -37,15 +37,24 @@ import {
   removeHistoryMedia,
   saveAttachment,
 } from "./media";
-import { containedFile, importModelFile, withModelUrls } from "./models";
+import {
+  containedFile,
+  importModelFile,
+  resolveModelEntry,
+  withModelUrls,
+} from "./models";
 import {
   findLive2DCore,
   downloadLive2DCore,
   installLive2DCore,
-  LIVE2D_CORE_FILE,
   live2dCoreUrl,
   type Live2DCore,
 } from "./live2d-core";
+import {
+  LIVE2D_RUNTIME_FILES,
+  live2dRuntimeForEntry,
+  type Live2DRuntime,
+} from "../shared/live2d";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
 import {
@@ -128,10 +137,13 @@ const accountClient = new AccountClient(certificateAuthority);
 const localServer = new LocalServer(process.env.MAI_PYTHON);
 let qqLogin: { server: string; proof: LoginProof } | null = null;
 let historyEpoch = 0;
+let repliesBeforeConnection = new Set<string>();
 let store: StateStore;
-let live2dCore: Live2DCore | undefined;
-let live2dCoreDownload: Promise<Live2DCore> | undefined;
+const live2dCores: Partial<Record<Live2DRuntime, Live2DCore>> = {};
+const live2dCoreDownloads: Partial<Record<Live2DRuntime, Promise<Live2DCore>>> =
+  {};
 let live2dCoreError = "";
+let live2dCoreErrorRuntime: Live2DRuntime = "modern";
 let dashboard: BrowserWindow | null = null;
 let pet: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -220,14 +232,16 @@ async function observeScreen(now: number) {
 function snapshot(): Snapshot {
   return structuredClone({
     ...store.state,
-    live2dCoreReady: Boolean(live2dCore),
-    live2dCoreDownloading: Boolean(live2dCoreDownload),
+    live2dCoreReady: Boolean(live2dCores.modern),
+    live2dLegacyReady: Boolean(live2dCores.legacy),
+    live2dCoreDownloading: Object.values(live2dCoreDownloads).some(Boolean),
     live2dCoreError,
-    models: store.state.models.map((model) =>
-      model.kind === "live2d" && live2dCore
-        ? { ...model, coreUrl: live2dCoreUrl(live2dCore) }
-        : model,
-    ),
+    live2dCoreErrorRuntime,
+    models: store.state.models.map((model) => {
+      if (model.kind !== "live2d") return model;
+      const core = live2dCores[live2dRuntimeForEntry(model.entry)];
+      return { ...model, coreUrl: core ? live2dCoreUrl(core) : undefined };
+    }),
     removedServerAccounts: store.removedAccounts(
       store.state.settings.serverUrl,
     ),
@@ -241,27 +255,35 @@ function broadcast() {
       window.webContents.send("mai:state", state);
 }
 
-function downloadCore(): Promise<Live2DCore> {
-  if (live2dCoreDownload) return live2dCoreDownload;
+function downloadCore(runtime: Live2DRuntime = "modern"): Promise<Live2DCore> {
+  const pending = live2dCoreDownloads[runtime];
+  if (pending) return pending;
   live2dCoreError = "";
-  live2dCoreDownload = (async () => {
+  live2dCoreDownloads[runtime] = (async () => {
     try {
-      live2dCore = await downloadLive2DCore(
+      const core = await downloadLive2DCore(
         join(store.directory, "models"),
         (url, options) => net.fetch(url, options),
+        runtime,
       );
-      activity("已从 Live2D 官方下载运行库，之后可离线复用");
-      return live2dCore;
+      live2dCores[runtime] = core;
+      activity(
+        runtime === "modern"
+          ? "已从 Live2D 官方下载运行库，之后可离线复用"
+          : "Cubism 2 兼容运行库已下载并通过归档校验，之后可离线复用",
+      );
+      return core;
     } catch (error) {
       live2dCoreError = error instanceof Error ? error.message : String(error);
+      live2dCoreErrorRuntime = runtime;
       throw error;
     } finally {
-      live2dCoreDownload = undefined;
+      delete live2dCoreDownloads[runtime];
       broadcast();
     }
   })();
   broadcast();
-  return live2dCoreDownload;
+  return live2dCoreDownloads[runtime]!;
 }
 function activity(text: string, level: "info" | "error" = "info") {
   store.state.activity = [
@@ -449,6 +471,9 @@ function trusted(sender: Electron.WebContents) {
   return [dashboard?.webContents.id, pet?.webContents.id].includes(sender.id);
 }
 function loadWindow(window: BrowserWindow, view: string) {
+  window.on("hide", () => {
+    window.webContents.send("mai:window-hidden");
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isModelGuideUrl(url))
       void shell.openExternal(url).catch(() => {
@@ -553,6 +578,13 @@ function createPet() {
     applyPetSettings();
     if (savedPosition) fitPet(savedPosition.x, savedPosition.y);
   });
+  pet.once("show", () => {
+    // Windows 首次显示的原生初始化可能覆盖同步设置的置顶，等本轮显示完成后再恢复。
+    setImmediate(() => {
+      if (!pet || pet.isDestroyed() || !pet.isVisible()) return;
+      pet.setAlwaysOnTop(store.state.settings.alwaysOnTop, "floating");
+    });
+  });
   pet.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
@@ -574,10 +606,11 @@ function applyPetSettings() {
   // Windows 会把不可拉伸窗口的当前尺寸作为最小值，缩小前清除旧约束。
   pet.setMinimumSize(0, 0);
   fitPet(previous.x, previous.y);
-  pet.setAlwaysOnTop(settings.alwaysOnTop, "floating");
-  pet.setIgnoreMouseEvents(settings.clickThrough, { forward: true });
+  pet.setIgnoreMouseEvents(settings.clickThrough);
   if (settings.petVisible) pet.showInactive();
   else pet.hide();
+  // Windows 首次显示前设置置顶可能不生效，显示后再应用原生层级。
+  pet.setAlwaysOnTop(settings.alwaysOnTop, "floating");
 }
 
 async function updateSettings(patch: Partial<Settings>) {
@@ -648,12 +681,18 @@ async function updateSettings(patch: Partial<Settings>) {
   await store.save();
   applyPetSettings();
   if ("petPositionLocked" in parsed) updateTrayMenu();
-  if (app.isPackaged && "launchAtLogin" in parsed)
-    app.setLoginItemSettings({
-      openAtLogin: store.state.settings.launchAtLogin,
-    });
+  if (app.isPackaged && "launchAtLogin" in parsed) applyLoginSettings();
   broadcast();
   return snapshot();
+}
+
+function applyLoginSettings() {
+  app.setLoginItemSettings({
+    openAtLogin: store.state.settings.launchAtLogin,
+    // portable 的 process.execPath 位于退出后会被删除的临时解压目录。
+    path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+    args: [],
+  });
 }
 
 async function send(input: SendInput, canSend?: () => boolean) {
@@ -1260,6 +1299,7 @@ async function commands(
       ++historyEpoch;
       const removed = store.state.history;
       store.state.history = [];
+      store.state.liveReplies = [];
       await store.save();
       await removeHistoryMedia(store.directory, removed);
       broadcast();
@@ -1290,7 +1330,9 @@ async function commands(
       return true;
     }
     case "downloadLive2DCore": {
-      await downloadCore();
+      await downloadCore(
+        z.enum(["modern", "legacy"]).default("modern").parse(args[0]),
+      );
       return;
     }
     case "importLive2DCore": {
@@ -1300,18 +1342,23 @@ async function commands(
         filters: [{ name: "Cubism Core", extensions: ["js"] }],
       });
       if (selected.canceled) return false;
-      live2dCore = await installLive2DCore(
+      const core = await installLive2DCore(
         join(store.directory, "models"),
         selected.filePaths[0],
       );
+      live2dCores[core.runtime] = core;
       live2dCoreError = "";
       activity("Live2D 运行库已保存，导入其他模型时会自动复用");
       return true;
     }
     case "importModel": {
+      const source = z.enum(["file", "folder"]).default("file").parse(args[0]);
       const selected = await dialog.showOpenDialog({
-        title: "导入角色模型或图片",
-        properties: ["openFile"],
+        title:
+          source === "folder"
+            ? "选择完整的 Live2D 模型文件夹"
+            : "导入角色模型或图片",
+        properties: [source === "folder" ? "openDirectory" : "openFile"],
         filters: [
           {
             name: "角色模型",
@@ -1331,27 +1378,19 @@ async function commands(
         ],
       });
       if (selected.canceled) return;
-      const file = selected.filePaths[0];
+      const file = await resolveModelEntry(selected.filePaths[0]);
       const modelsRoot = join(store.directory, "models");
       let coreFile: string | undefined;
-      if (file.toLowerCase().endsWith(".model3.json")) {
-        coreFile = (await findLive2DCore(modelsRoot))?.file;
+      const runtime = live2dRuntimeForEntry(file);
+      if (/\.model3?\.json$/i.test(file)) {
+        coreFile = (await findLive2DCore(modelsRoot, runtime))?.file;
         if (!coreFile) {
-          const candidate = join(dirname(file), LIVE2D_CORE_FILE);
-          try {
-            await access(candidate);
-            coreFile = candidate;
-          } catch {
-            // 首次设置时，也可以选择保存在其他目录的官方 Core。
-          }
-        }
-        if (!coreFile) {
-          coreFile = (await downloadCore()).file;
+          coreFile = (await downloadCore(runtime)).file;
         }
       }
       const model = await importModelFile(file, modelsRoot, coreFile);
       if (model.kind === "live2d")
-        live2dCore = await findLive2DCore(modelsRoot);
+        live2dCores[runtime] = await findLive2DCore(modelsRoot, runtime);
       store.state.models.push(model);
       await updateSettings({ activeModelId: model.id });
       activity(`已导入角色：${model.name}`);
@@ -1614,6 +1653,14 @@ void app
     store = new StateStore(app.getPath("userData"));
     await store.load();
     store.state.version = app.getVersion();
+    if (app.isPackaged && store.state.settings.launchAtLogin) {
+      try {
+        // 修复旧便携版本留下的临时程序路径，并跟随启动器的新位置。
+        applyLoginSettings();
+      } catch {
+        activity("开机启动设置未能更新，请在偏好设置中重新开启", "error");
+      }
+    }
     serverCertificates = new ServerCertificateStore(store.directory);
     try {
       await serverCertificates.load();
@@ -1622,7 +1669,11 @@ void app
       activity(error instanceof Error ? error.message : String(error), "error");
     }
     await pruneMedia(store.directory, store.allHistory());
-    live2dCore = await findLive2DCore(join(store.directory, "models"));
+    for (const runtime of ["modern", "legacy"] as const)
+      live2dCores[runtime] = await findLive2DCore(
+        join(store.directory, "models"),
+        runtime,
+      );
     store.state.models = store.state.models.map(withModelUrls);
     if (!store.state.settings.corePath && !app.isPackaged)
       store.state.settings.corePath = join(root, "MaiBot");
@@ -1630,13 +1681,13 @@ void app
       try {
         const url = new URL(request.url);
         if (url.hostname === "runtime") {
-          if (
-            !live2dCore ||
-            url.pathname !== `/${LIVE2D_CORE_FILE}` ||
-            url.searchParams.get("v") !== live2dCore.revision
-          )
+          const runtime = (
+            Object.keys(LIVE2D_RUNTIME_FILES) as Live2DRuntime[]
+          ).find((key) => url.pathname === `/${LIVE2D_RUNTIME_FILES[key]}`);
+          const core = runtime && live2dCores[runtime];
+          if (!core || url.searchParams.get("v") !== core.revision)
             return new Response("Not found", { status: 404 });
-          return net.fetch(pathToFileURL(live2dCore.file).toString());
+          return net.fetch(pathToFileURL(core.file).toString());
         }
         const [id, ...parts] = url.pathname
           .slice(1)
@@ -1722,14 +1773,6 @@ void app
         persist();
       }
     });
-    ipcMain.on("mai:interactive", (event, value: unknown) => {
-      if (
-        event.sender.id === pet?.webContents.id &&
-        typeof value === "boolean" &&
-        store.state.settings.clickThrough
-      )
-        pet?.setIgnoreMouseEvents(!value, { forward: true });
-    });
     ipcMain.on("mai:playback-report", (event, raw: unknown) => {
       if (!trusted(event.sender)) return;
       const parsed = playbackReportSchema.safeParse(raw);
@@ -1762,6 +1805,7 @@ void app
     });
     bridge.on("status", (status: Snapshot["connection"]) => {
       ++historyEpoch;
+      store.state.liveReplies = [];
       if (
         status.phase === "connected" &&
         store.state.settings.connectionMode === "server" &&
@@ -1773,6 +1817,12 @@ void app
         store.selectHistory(`server:${key}`);
         persist();
       }
+      // 初次同步会替换历史对象，保留连接前的 ID，避免缓存重发恢复朗读资格。
+      repliesBeforeConnection = new Set(
+        store.state.history
+          .filter((message) => message.role === "assistant")
+          .map((message) => message.id),
+      );
       store.state.connection = status;
       store.state.historySync = {
         enabled:
@@ -1820,6 +1870,7 @@ void app
         .then(async () => {
           if (epoch !== historyEpoch || history !== store.state.history) return;
           const removed = history.splice(0);
+          store.state.liveReplies = [];
           store.state.historySync = {
             enabled: true,
             loading: false,
@@ -1836,6 +1887,9 @@ void app
     });
     bridge.on("reply", (reply: Reply, acknowledge: (error?: Error) => void) => {
       const history = store.state.history;
+      const epoch = historyEpoch;
+      const previousReplies = repliesBeforeConnection;
+      const receivedAt = Date.now();
       replyQueue = replyQueue
         .then(async () => {
           if (
@@ -1845,24 +1899,37 @@ void app
             )
           ) {
             await store.flush();
-            acknowledge();
-            return;
+          } else {
+            const attachments = [];
+            for (const attachment of reply.attachments || [])
+              attachments.push(
+                await saveAttachment(store.directory, attachment),
+              );
+            history.push({
+              ...reply,
+              attachments: attachments.length ? attachments : undefined,
+              role: "assistant",
+              timestamp: receivedAt,
+              source: "core",
+            });
+            if (history.length > 1000) history.splice(0, history.length - 1000);
+            await store.save();
           }
-          const attachments = [];
-          for (const attachment of reply.attachments || [])
-            attachments.push(await saveAttachment(store.directory, attachment));
-          history.push({
-            ...reply,
-            attachments: attachments.length ? attachments : undefined,
-            role: "assistant",
-            timestamp: Date.now(),
-            source: "core",
-          });
-          if (history.length > 1000) history.splice(0, history.length - 1000);
-          lastInteraction = Date.now();
-          clearReplyStatus();
-          await store.save();
-          broadcast();
+          if (history === store.state.history && epoch === historyEpoch) {
+            // 存储去重不等于实时投递已处理：history 可能比同一条 reply 先到。
+            if (
+              !previousReplies.has(reply.id) &&
+              !store.state.liveReplies.some((item) => item.id === reply.id)
+            ) {
+              store.state.liveReplies = [
+                ...store.state.liveReplies,
+                { id: reply.id, receivedAt },
+              ].slice(-1000);
+              lastInteraction = receivedAt;
+              clearReplyStatus();
+            }
+            broadcast();
+          }
           acknowledge();
         })
         .catch((error) => {

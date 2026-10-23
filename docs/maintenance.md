@@ -32,7 +32,9 @@
 
 ## 依赖
 
-Node 环境以 `package-lock.json` 为准，使用 `npm ci`。Electron 固定为 41.10.6，打包工具固定 26.15.3；`overrides` 将其下载器升级为公开 API 相容的 `@electron/get` 5，Live2D 的发布辅助工具固定为修复过原型污染且兼容原有依赖链的 `gh-pages` 5.0.0。它们不用于桌宠交互，但影响干净安装与发布。更新 override 时必须重跑安装、依赖审计和发行打包。
+Node 环境以 `package-lock.json` 为准，使用 `npm ci`。Electron 固定为 41.10.6，打包工具固定 26.15.3；`overrides` 将其下载器升级为公开 API 相容的 `@electron/get` 5。更新 override 时必须重跑安装、依赖审计和发行打包。
+
+Live2D 通过 npm alias 将 `pixi-live2d-display` 固定到 `pixi-live2d-display-lipsyncpatch@0.5.0-ls-8`，配套 `pixi.js@7.4.3`。这是 N.E.K.O 所用维护分支的后续版本，支持新旧运行时与更新的 Cubism 渲染框架；原依赖携带的 `gh-pages` 及对应 override 已移除。升级必须检查 `src/renderers/live2d-clipping.ts` 使用的框架内部字段，运行单元测试、`test:live2d-compat` 与原 `test:live2d`，并重新审计依赖。运行库和测试模型保存在应用数据目录或忽略的 `.cache` 中，不能加入发行包。
 
 插件公开依赖范围在 `pyproject.toml` / `requirements.txt` 同步维护，独立开发环境用 `uv sync --locked`；宿主只安装 requirements，不能在 MaiBot 环境用插件的 lock 执行同步，以免移除内核依赖。最低 Host 为 1.3.5，最低 SDK 为 2.10.0，锁定 SDK 为 2.13.0。
 

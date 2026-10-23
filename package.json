@@ -22,13 +22,18 @@
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
     "test:interaction": "node scripts/interaction-smoke.mjs",
+    "test:lifecycle": "node scripts/lifecycle-smoke.mjs",
+    "test:avatar-lifecycle": "node scripts/avatar-lifecycle-smoke.mjs",
     "test:model-guidance": "node scripts/model-guidance-smoke.mjs",
     "test:chat-audio": "node scripts/chat-audio-smoke.mjs",
     "test:tts-clone": "node scripts/tts-clone-smoke.mjs",
     "test:voice-import": "node scripts/voice-import-smoke.mjs && node scripts/voice-import-providers-smoke.mjs",
     "test:window-scale": "node scripts/window-scale-smoke.mjs --dev && node scripts/window-scale-smoke.mjs",
     "test:pet-drag": "node scripts/pet-drag-smoke.mjs",
+    "test:pet-click-through": "node scripts/pet-click-through-smoke.mjs",
+    "test:pet-topmost": "node scripts/pet-topmost-smoke.mjs",
     "test:live2d": "node scripts/live2d-smoke.mjs",
+    "test:live2d-compat": "node scripts/live2d-compat-smoke.mjs",
     "test:server-desktop": "node scripts/server-desktop-smoke.mjs",
     "test:qq-login": "node scripts/qq-login-smoke.mjs",
     "test:local-server": "node scripts/local-server-smoke.mjs",
@@ -42,8 +47,8 @@
   "dependencies": {
     "@pixiv/three-vrm": "^3.4.2",
     "lucide-react": "^0.468.0",
-    "pixi-live2d-display": "^0.4.0",
-    "pixi.js": "^6.5.10",
+    "pixi-live2d-display": "npm:pixi-live2d-display-lipsyncpatch@0.5.0-ls-8",
+    "pixi.js": "7.4.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "three": "^0.179.1",
@@ -69,9 +74,6 @@
     "vitest": "^4.0.0"
   },
   "overrides": {
-    "pixi-live2d-display": {
-      "gh-pages": "5.0.0"
-    },
     "@electron/get": "^5.0.0"
   },
   "build": {

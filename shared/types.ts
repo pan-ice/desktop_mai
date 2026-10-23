@@ -145,6 +145,8 @@ export interface Snapshot {
     transport?: "gateway" | "legacy";
   };
   history: ChatMessage[];
+  /** 当前会话的即时投递及本机接收时间；历史补载不设置，也不持久化。 */
+  liveReplies: { id: string; receivedAt: number }[];
   historySync: {
     enabled: boolean;
     loading: boolean;
@@ -156,8 +158,10 @@ export interface Snapshot {
   models: ImportedModel[];
   clonedVoices: ClonedVoice[];
   live2dCoreReady: boolean;
+  live2dLegacyReady: boolean;
   live2dCoreDownloading: boolean;
   live2dCoreError: string;
+  live2dCoreErrorRuntime: "modern" | "legacy";
   activity: Activity[];
   mood: Mood;
   focusUntil: number | null;
@@ -186,6 +190,7 @@ export interface DesktopApi {
   snapshot(): Promise<Snapshot>;
   subscribe(callback: (state: Snapshot) => void): () => void;
   onNavigate(callback: (page: Page) => void): () => void;
+  onWindowHidden(callback: () => void): () => void;
   updateSettings(patch: Partial<Settings>): Promise<Snapshot>;
   setCredential(key: CredentialKey, value: string): Promise<void>;
   connect(): Promise<void>;
@@ -212,9 +217,9 @@ export interface DesktopApi {
   send(input: SendInput): Promise<void>;
   clearHistory(): Promise<void>;
   exportHistory(): Promise<boolean>;
-  importModel(): Promise<void>;
+  importModel(source?: "file" | "folder"): Promise<void>;
   importLive2DCore(): Promise<boolean>;
-  downloadLive2DCore(): Promise<void>;
+  downloadLive2DCore(runtime?: "modern" | "legacy"): Promise<void>;
   removeModel(id: string): Promise<void>;
   screenSources(): Promise<ScreenSource[]>;
   captureScreen(sourceId: string): Promise<string>;
@@ -235,7 +240,6 @@ export interface DesktopApi {
   showDashboard(page?: Page): Promise<void>;
   hideWindow(): Promise<void>;
   petDrag(action: "start" | "move" | "end"): void;
-  petInteractive(interactive: boolean): void;
   openDataFolder(): Promise<void>;
   quit(): Promise<void>;
 }

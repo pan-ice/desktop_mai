@@ -5,12 +5,23 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { _electron as electron } from "playwright";
 import WebSocket from "ws";
 
 const base = resolve(".cache/voice-replies-smoke");
 await mkdir(base, { recursive: true });
 const profile = await mkdtemp(join(base, "profile-"));
+const hidden = process.argv.includes("--hidden");
+const entry = join(profile, "bootstrap.mjs");
+if (hidden)
+  await writeFile(
+    entry,
+    `import { BrowserWindow } from "electron";
+BrowserWindow.prototype.show = function () {};
+BrowserWindow.prototype.showInactive = function () {};
+await import(${JSON.stringify(pathToFileURL(resolve("out/main/index.js")).href)});`,
+  );
 const probe = createServer();
 probe.listen(0, "127.0.0.1");
 await once(probe, "listening");
@@ -66,9 +77,10 @@ const acknowledgements = new Map();
 try {
   const env = { ...process.env, MAI_USER_DATA: profile };
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ELECTRON_RENDERER_URL;
   desktop = await electron.launch({
     executablePath: resolve("node_modules/electron/dist/electron.exe"),
-    args: ["."],
+    args: [hidden ? entry : "."],
     cwd: resolve("."),
     env,
     timeout: 30000,

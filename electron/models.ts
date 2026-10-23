@@ -22,8 +22,105 @@ import type { ImportedModel, ModelKind } from "../shared/types";
 import {
   findLive2DCore,
   installLive2DCore,
-  LIVE2D_CORE_FILE,
+  live2dCoreUrl,
+  type Live2DCore,
 } from "./live2d-core";
+import { LIVE2D_RUNTIME_FILES, live2dRuntimeForEntry } from "../shared/live2d";
+
+export async function resolveModelEntry(path: string): Promise<string> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) throw new Error("模型入口不能是符号链接");
+  if (info.isFile()) return path;
+  if (!info.isDirectory()) throw new Error("请选择模型文件或文件夹");
+  const entries: string[] = [];
+  let visited = 0;
+  const walk = async (directory: string, depth: number) => {
+    if (depth > 10) throw new Error("模型目录层级超过限制");
+    for (const item of await readdir(directory, { withFileTypes: true })) {
+      if (++visited > 5000)
+        throw new Error("模型目录文件过多，请选择单个模型的文件夹");
+      if (item.name.startsWith(".") || item.isSymbolicLink()) continue;
+      const file = join(directory, item.name);
+      if (item.isDirectory()) await walk(file, depth + 1);
+      else if (/\.model3?\.json$/i.test(item.name)) entries.push(file);
+    }
+  };
+  await walk(path, 0);
+  if (entries.length !== 1)
+    throw new Error(
+      entries.length
+        ? "文件夹中有多个 Live2D 模型，请直接选择要导入的 .model3.json 或 .model.json"
+        : "未找到 Live2D 模型入口，请先解压模型包；编辑器工程需先导出运行时模型",
+    );
+  return entries[0];
+}
+
+function live2dResources(
+  config: Record<string, unknown>,
+  legacy: boolean,
+  optional: Set<string>,
+): string[] {
+  const files: string[] = [];
+  const file = (value: unknown, label: string, required = false) => {
+    if (value === undefined && !required) return;
+    if (typeof value !== "string" || !value.trim())
+      throw new Error(`Live2D 模型缺少或包含无效的 ${label}`);
+    files.push(value);
+  };
+  const array = (value: unknown, label: string): unknown[] => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new Error(`Live2D ${label} 必须是数组`);
+    return value;
+  };
+  const object = (value: unknown, label: string): Record<string, unknown> => {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error(`Live2D ${label} 格式不正确`);
+    return value as Record<string, unknown>;
+  };
+  const refs = legacy
+    ? config
+    : object(config.FileReferences, "FileReferences");
+  file(
+    refs[legacy ? "model" : "Moc"],
+    legacy ? "model" : "FileReferences.Moc",
+    true,
+  );
+  for (const texture of array(
+    refs[legacy ? "textures" : "Textures"],
+    "Textures",
+  ))
+    file(texture, "Texture", true);
+  for (const key of legacy
+    ? ["physics", "pose"]
+    : ["Physics", "Pose", "UserData"])
+    file(refs[key], key);
+  const motions = refs[legacy ? "motions" : "Motions"];
+  if (motions !== undefined)
+    for (const group of Object.values(object(motions, "Motions"))) {
+      for (const value of array(group, "Motion group")) {
+        const motion = object(value, "Motion");
+        file(motion[legacy ? "file" : "File"], "Motion.File", true);
+        file(motion[legacy ? "sound" : "Sound"], "Motion.Sound");
+      }
+    }
+  for (const value of array(
+    refs[legacy ? "expressions" : "Expressions"],
+    "Expressions",
+  ))
+    file(
+      object(value, "Expression")[legacy ? "file" : "File"],
+      "Expression.File",
+      true,
+    );
+  // DisplayInfo 仅是编辑器参数标签；不少可运行模型不会随包分发此文件。
+  if (!legacy && refs.DisplayInfo !== undefined) {
+    const metadata = refs.DisplayInfo;
+    if (typeof metadata === "string" && !files.includes(metadata))
+      optional.add(metadata);
+    file(metadata, "DisplayInfo");
+  }
+  return files;
+}
 
 export function safeAssetPath(root: string, requested: string): string {
   if (
@@ -51,7 +148,8 @@ export function withModelUrls(model: ImportedModel): ImportedModel {
     talkingUrl: model.talkingEntry
       ? assetUrl(model.id, model.talkingEntry)
       : undefined,
-    coreUrl: model.coreEntry ? assetUrl(model.id, model.coreEntry) : undefined,
+    // 旧模型目录里的脚本不能直接执行；由主进程提供校验过的共享运行库。
+    coreUrl: undefined,
   };
 }
 
@@ -89,6 +187,7 @@ export async function importModelFile(
   modelsRoot: string,
   coreFile?: string,
 ): Promise<ImportedModel> {
+  file = await resolveModelEntry(file);
   const id = randomUUID();
   const source = dirname(file);
   const entry = basename(file);
@@ -99,6 +198,7 @@ export async function importModelFile(
   let coreEntry: string | undefined;
   let name = basename(file, ext);
   const resources = new Set([entry]);
+  const optionalResources = new Set<string>();
   if (imageExtensions.has(ext)) kind = "image";
   else if (ext === ".vrm" || ext === ".glb") kind = "vrm";
   else if (ext === ".pmx" || ext === ".pmd") {
@@ -118,36 +218,27 @@ export async function importModelFile(
       }
     };
     await walk(source);
-  } else if (entry.toLowerCase().endsWith(".model3.json")) {
+  } else if (/\.model3?\.json$/i.test(entry)) {
     kind = "live2d";
-    const config = JSON.parse(await readFile(file, "utf8")) as {
-      FileReferences?: Record<string, unknown>;
-    };
-    if (!config.FileReferences || typeof config.FileReferences.Moc !== "string")
-      throw new Error("Live2D 模型缺少 FileReferences.Moc");
-    const collect = (value: unknown) => {
-      if (typeof value === "string") {
-        safeAssetPath(source, value);
-        resources.add(value);
-      } else if (Array.isArray(value)) value.forEach(collect);
-      else if (value && typeof value === "object") {
-        for (const [key, child] of Object.entries(value)) {
-          if (["Name", "FadeInTime", "FadeOutTime"].includes(key)) continue;
-          collect(child);
-        }
-      }
-    };
-    collect(config.FileReferences);
-    coreFile ??= (await findLive2DCore(modelsRoot))?.file;
+    const runtime = live2dRuntimeForEntry(entry);
+    const config = JSON.parse(await readFile(file, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    for (const resource of live2dResources(
+      config,
+      runtime === "legacy",
+      optionalResources,
+    )) {
+      safeAssetPath(source, resource);
+      resources.add(resource);
+    }
+    coreFile ??= (await findLive2DCore(modelsRoot, runtime))?.file;
     if (!coreFile)
       throw new Error(
-        "请先设置一次官方 Cubism Core（live2dcubismcore.min.js），之后导入 Live2D 会自动复用",
+        `请先设置一次 ${runtime === "legacy" ? "Cubism 2 兼容运行库（live2d.min.js）" : "官方 Cubism Core（live2dcubismcore.min.js）"}，之后导入 Live2D 会自动复用`,
       );
-    coreEntry = LIVE2D_CORE_FILE;
-  } else if (entry.toLowerCase().endsWith(".model.json")) {
-    throw new Error(
-      "暂不支持 Cubism 2 的 .model.json，请使用 Cubism 3 / 4 / 5 的 .model3.json 模型",
-    );
+    coreEntry = LIVE2D_RUNTIME_FILES[runtime];
   } else if (ext === ".json") {
     const config = JSON.parse(await readFile(file, "utf8")) as {
       name?: string;
@@ -169,17 +260,28 @@ export async function importModelFile(
     return copyModel(config.idle);
   } else
     throw new Error(
-      "支持图片、PNGTuber JSON、Live2D model3.json、VRM / GLB 和 PMX / PMD",
+      "支持图片、PNGTuber JSON、Live2D model.json / model3.json、VRM / GLB 和 PMX / PMD",
     );
 
   return copyModel(entry);
 
   async function copyModel(modelEntry: string): Promise<ImportedModel> {
     try {
+      let core: Live2DCore | undefined;
       let bytes = 0;
       const copies: [string, string][] = [];
       for (const resource of resources) {
-        const original = await containedFile(source, resource);
+        let original: string;
+        try {
+          original = await containedFile(source, resource);
+        } catch (error) {
+          if (
+            optionalResources.has(resource) &&
+            (error as NodeJS.ErrnoException).code === "ENOENT"
+          )
+            continue;
+          throw error;
+        }
         bytes += (await lstat(original)).size;
         if (bytes > 512 * 1024 * 1024)
           throw new Error("模型资源超过 512 MB，请精简后导入");
@@ -191,10 +293,14 @@ export async function importModelFile(
         await copyFile(original, destination);
       }
       if (coreEntry && coreFile) {
-        await installLive2DCore(modelsRoot, coreFile);
-        await copyFile(coreFile, join(target, coreEntry));
+        core = await installLive2DCore(
+          modelsRoot,
+          coreFile,
+          live2dRuntimeForEntry(entry),
+        );
+        await copyFile(core.file, join(target, coreEntry));
       }
-      return withModelUrls({
+      const model = withModelUrls({
         id,
         name,
         kind,
@@ -204,6 +310,7 @@ export async function importModelFile(
         addedAt: Date.now(),
         assetUrl: "",
       });
+      return { ...model, coreUrl: core ? live2dCoreUrl(core) : undefined };
     } catch (error) {
       // target 只能是本次生成的 UUID 子目录。
       await rm(target, { recursive: true, force: true });

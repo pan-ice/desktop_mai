@@ -107,7 +107,7 @@ MaiBot 由部署方独立启动和管理，桌宠客户端只负责连接、登�
 | 摄像头     | 摄像头选择、拍照、预览后分享，关闭预览即释放设备                                                          |
 | 主动陪伴   | 空闲后向内核提交陪伴意图、可配置意图和频率、跨午夜免打扰、专注时暂停                                      |
 | 专注陪伴   | 25 分钟专注、倒计时、安静状态、结束通知                                                                   |
-| 模型导入   | 图片 / GIF、PNGTuber、Live2D Cubism 3 / 4、VRM 0 / 1、GLB、PMX / PMD                                      |
+| 模型导入   | 图片 / GIF、PNGTuber、Live2D Cubism 2 / 3 / 4 / 5 运行时模型、VRM 0 / 1、GLB、PMX / PMD                     |
 | 动画表现   | 呼吸、眨眼、点击开心、睡眠、实际音频口型；VRM 视线及 MMD 常用表情映射                                     |
 | 人格与记忆 | 使用所连接 MaiBot 的实际人格和记忆系统，由部署方管理                                                      |
 | 插件与工具 | 使用 MaiBot 已配置的插件与工具能力，由部署方管理                                                          |
@@ -120,6 +120,8 @@ MaiBot 由部署方独立启动和管理，桌宠客户端只负责连接、登�
 模型朗读支持硅基流动、阿里云百炼、MiniMax、火山引擎、小米 MiMo；各自保存 Key、模型及复刻音色。在「声音与感知」选择服务商，提交参考材料，音色就绪后点击「使用音色」和「试听声音」。百炼需公网参考音频链接，火山采用新版 API Key 和音色槽位 / 自定义 ID。MiMo 可选择预置音色，或在本机保存 MP3 / WAV 参考音色并随每次合成请求发送。配置、计费差异与验证范围见 [在线音色复刻](docs/voice-cloning.md)。录音转写独立配置，MaiBot 已发来的语音直接按顺序播放。
 
 桌宠默认锁定位置，避免点击时误拖。点击角色旁的锁按钮可解锁后拖动，摆好位置后再次点击即可锁定；「偏好设置」和托盘菜单也能切换「锁定桌宠位置」，重启保留选择。
+
+开启「鼠标穿透」后，角色、气泡和按钮上的鼠标操作都会落到下面的窗口。可在「偏好设置」或托盘菜单关闭穿透，也可以按 `Ctrl + Shift + M` 恢复交互。
 
 连续语音采用 **语音检测 → ASR → MaiBot → TTS**，仍由 MaiBot 生成回复。它不是直连其他模型的 Realtime API 旁路。模型与插件支持取决于你配置的 MaiBot 与服务商。
 
@@ -138,7 +140,11 @@ N.E.K.O 的 Steam 创意工坊、猫娘网络、手机端、专有账号 / 云�
   { "name": "我的麦麦", "idle": "idle.png", "talking": "talking.png" }
   ```
 
-- Live2D：选择 `.model3.json`，自动复制所引用的 moc3、贴图、动作与表情。**只有完整的模型文件也能导入**：首次找不到 Core 时，应用会从 [Live2D 官方](https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js) 自动下载运行库，成功后继续导入。也可在「角色衣橱」点击「下载官方运行库」提前准备；已有 `live2dcubismcore.min.js` 时选择「从本地导入」，或放在模型入口文件旁边。下载使用系统网络和代理，失败后可重试或改用本地导入。Core 保存在应用数据目录，下载一次后可离线复用，移动原文件或移除角色均不影响；旧版角色的 Core 会自动沿用。需要升级时点击「更新官方运行库」，正在显示的模型会重新加载。Core 不打入应用安装包，使用遵循其文件中的官方许可。支持 Cubism 3 / 4 的 `.model3.json`，已使用 Core 5.1.0 实测 Cubism 5.0 导出的洛天依「翡翠石」模型；其他 Cubism 5 模型仍需逐个验证，暂不支持 Cubism 2 的 `.model.json`。
+- Live2D：支持 Cubism 2 的 `.model.json` + `.moc`，以及 Cubism 3 / 4 / 5 的 `.model3.json` + `.moc3`。选择入口文件，或点击「导入模型文件夹」，自动复制贴图、动作、表情、物理、姿势与动作音频；文件夹中存在多个入口时会提示选择具体文件。ZIP 请先解压；`.cmo3` / `.can3` 编辑器工程需先导出运行时模型。
+
+  首次导入会自动准备对应运行库：新版从 [Live2D 官方](https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js) 下载 Core；旧版使用经过固定 SHA-256 校验的 N.E.K.O 归档。也可在衣橱中提前下载，或从本地导入通过校验的 `live2dcubismcore.min.js` / `live2d.min.js`。两套运行库独立缓存，下载一次后可离线复用；更新新版 Core 时，正在显示的新模型会重新加载。模型旁的任意脚本不会执行，运行库不打入安装包，使用遵循其文件中的许可。
+
+  渲染器采用 N.E.K.O 使用的同一维护分支，并适配复杂遮罩、自定义口型和眼睛参数。已实测 Shizuku、Haru、Mao 与洛天依「翡翠石」，范围与版本边界见 [Live2D 兼容性说明](docs/live2d-compatibility.md)。
 - VRM / GLB：选择包含完整资源的单个 `.vrm` / `.glb` 文件。
 - MMD：将 `.pmx` / `.pmd` 及贴图放在独立文件夹中，选择模型文件；导入同文件夹内的模型资源。当前提供静态模型、呼吸与常见表情 / 口型映射，未包含 MMD 物理或 VMD 动作时间线。
 
@@ -182,6 +188,9 @@ npm run test:plugin
 npm run test:adapter
 npm run test:desktop
 npm run test:interaction
+npm run test:lifecycle
+npm run test:pet-click-through
+npm run test:pet-topmost
 ```
 
 插件开发环境可独立初始化；跨语言与桌面测试使用它的解释器：

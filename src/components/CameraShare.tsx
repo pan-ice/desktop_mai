@@ -17,10 +17,28 @@ export function CameraShare({
   const [loading, setLoading] = useState(true);
   const [image, setImage] = useState("");
   const [text, setText] = useState("这是我现在看到的，一起来看看吧。");
+  const closePreview = useRef(onClose);
+  closePreview.current = onClose;
+  const releaseCamera = useRef<() => void>(() => {});
+  useEffect(
+    () =>
+      api.onWindowHidden(() => {
+        // 立即停止轨道，包括尚未完成的 getUserMedia；不等待隐藏窗口重新渲染。
+        releaseCamera.current();
+        closePreview.current();
+      }),
+    [],
+  );
   useEffect(() => {
     if (image) return;
     let disposed = false,
       stream: MediaStream | undefined;
+    const release = () => {
+      disposed = true;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (video.current) video.current.srcObject = null;
+    };
+    releaseCamera.current = release;
     setLoading(true);
     setError("");
     void navigator.mediaDevices
@@ -54,14 +72,14 @@ export function CameraShare({
       })
       .catch((reason) => {
         if (!disposed) {
+          release();
           setError(reason.message || String(reason));
           setLoading(false);
         }
       });
     return () => {
-      disposed = true;
-      stream?.getTracks().forEach((track) => track.stop());
-      if (video.current) video.current.srcObject = null;
+      release();
+      if (releaseCamera.current === release) releaseCamera.current = () => {};
     };
   }, [selected, image]);
   const take = () => {

@@ -95,7 +95,7 @@ export function SettingsPage({ state }: { state: Snapshot }) {
               state={state}
               name="clickThrough"
               label="鼠标穿透"
-              hint="透明区域不挡操作；Ctrl + Shift + M 可以恢复交互。"
+              hint="开启后角色、气泡和按钮都不挡鼠标；Ctrl + Shift + M 恢复交互。"
             />
             <Field label={`角色大小 · ${Math.round(draft.petScale * 100)}%`}>
               <input

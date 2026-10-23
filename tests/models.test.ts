@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { importModelFile, safeAssetPath } from "../electron/models";
+import {
+  importModelFile,
+  safeAssetPath,
+  withModelUrls,
+  resolveModelEntry,
+} from "../electron/models";
+import { downloadLive2DCore } from "../electron/live2d-core";
 
 const folders: string[] = [];
 const coreSource =
@@ -20,6 +26,20 @@ afterEach(async () => {
 });
 
 describe("本地模型导入", () => {
+  it("历史模型中的脚本路径不能作为渲染器运行库地址", () => {
+    const model = withModelUrls({
+      id: "old-model",
+      kind: "live2d",
+      name: "旧角色",
+      entry: "model.model3.json",
+      coreEntry: "live2dcubismcore.min.js",
+      coreUrl: "mai-asset://model/old-model/live2dcubismcore.min.js",
+      addedAt: 0,
+      assetUrl: "",
+    });
+    expect(model.coreUrl).toBeUndefined();
+  });
+
   it("支持 PNGTuber 双图，复制资源并生成局部资源地址", async () => {
     const root = await folder();
     await writeFile(join(root, "source/idle.png"), "idle");
@@ -55,6 +75,10 @@ describe("本地模型导入", () => {
     ])
       await writeFile(join(source, file), "{}");
     await writeFile(join(source, "core.js"), coreSource);
+    await downloadLive2DCore(
+      join(root, "models"),
+      async () => new Response(coreSource),
+    );
     await writeFile(
       join(source, "cat.model3.json"),
       JSON.stringify({
@@ -92,6 +116,7 @@ describe("本地模型导入", () => {
     const originalCore = join(root, "source", "core.js");
     await writeFile(originalCore, coreSource);
     const modelsRoot = join(root, "models");
+    await downloadLive2DCore(modelsRoot, async () => new Response(coreSource));
     const first = await importModelFile(
       join(root, "source", "first", "first.model3.json"),
       modelsRoot,
@@ -129,12 +154,118 @@ describe("本地模型导入", () => {
     ).rejects.toThrow();
   });
 
-  it("旧版 Cubism 2 模型会得到明确的兼容性提示", async () => {
+  it("旧版模型可以被识别，并要求独立的 Cubism 2 运行库", async () => {
     const root = await folder();
     const entry = join(root, "source", "legacy.model.json");
     await writeFile(entry, JSON.stringify({ model: "legacy.moc" }));
     await expect(importModelFile(entry, join(root, "models"))).rejects.toThrow(
-      "暂不支持 Cubism 2",
+      "Cubism 2 兼容运行库",
     );
+  });
+
+  it("文件夹导入发现嵌套入口，多个入口要求明确选择", async () => {
+    const root = await folder();
+    const nested = join(root, "source", "角色");
+    await mkdir(nested);
+    const entry = join(nested, "角色.model3.json");
+    await writeFile(entry, "{}");
+    expect(await resolveModelEntry(join(root, "source"))).toBe(entry);
+    await writeFile(join(nested, "legacy.model.json"), "{}");
+    await expect(resolveModelEntry(join(root, "source"))).rejects.toThrow(
+      "多个 Live2D 模型",
+    );
+    expect(await resolveModelEntry(entry)).toBe(entry);
+  });
+
+  it("现代资源引用只收集文件，保留自定义元数据及物理、姿势和音效", async () => {
+    const root = await folder();
+    const source = join(root, "source");
+    const files = [
+      "model.moc3",
+      "physics.physics3.json",
+      "pose.pose3.json",
+      "info.cdi3.json",
+      "user.userdata3.json",
+      "voice.wav",
+      "idle.motion3.json",
+    ];
+    for (const file of files) await writeFile(join(source, file), "{}");
+    await downloadLive2DCore(
+      join(root, "models"),
+      async () => new Response(coreSource),
+    );
+    const config = {
+      FileReferences: {
+        Moc: files[0],
+        Physics: files[1],
+        Pose: files[2],
+        DisplayInfo: files[3],
+        UserData: files[4],
+        Motions: {
+          Idle: [
+            {
+              File: files[6],
+              Sound: files[5],
+              Name: "待机",
+              CustomLabel: "不是文件路径",
+            },
+          ],
+        },
+        CustomMetadata: "不是资源文件",
+      },
+      Groups: [{ Target: "Parameter", Name: "LipSync", Ids: ["CustomMouth"] }],
+    };
+    const entry = join(source, "avatar.model3.json");
+    await writeFile(entry, JSON.stringify(config));
+    const model = await importModelFile(entry, join(root, "models"));
+    for (const file of files)
+      expect(await readFile(join(root, "models", model.id, file), "utf8")).toBe(
+        "{}",
+      );
+    expect(
+      JSON.parse(
+        await readFile(join(root, "models", model.id, model.entry), "utf8"),
+      ),
+    ).toEqual(config);
+  });
+
+  it("旧版模型的动作和表情不能引用模型目录外的文件", async () => {
+    const root = await folder();
+    const entry = join(root, "source", "legacy.model.json");
+    await writeFile(
+      entry,
+      JSON.stringify({
+        model: "legacy.moc",
+        motions: { idle: [{ file: "../outside.mtn" }] },
+      }),
+    );
+    await expect(importModelFile(entry, join(root, "models"))).rejects.toThrow(
+      "超出了导入目录",
+    );
+  });
+
+  it("缺少编辑器显示元数据时仍可导入，但缺少贴图或 moc 仍拒绝", async () => {
+    const root = await folder();
+    const source = join(root, "source");
+    await writeFile(join(source, "avatar.moc3"), "fixture");
+    await downloadLive2DCore(
+      join(root, "models"),
+      async () => new Response(coreSource),
+    );
+    const entry = join(source, "avatar.model3.json");
+    const refs = { Moc: "avatar.moc3", DisplayInfo: "optional.cdi3.json" };
+    await writeFile(entry, JSON.stringify({ FileReferences: refs }));
+    expect((await importModelFile(entry, join(root, "models"))).kind).toBe(
+      "live2d",
+    );
+    await writeFile(
+      entry,
+      JSON.stringify({
+        FileReferences: { ...refs, Textures: ["missing.png"] },
+      }),
+    );
+    await expect(
+      importModelFile(entry, join(root, "models")),
+    ).rejects.toThrow();
   });
 });

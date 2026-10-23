@@ -20,9 +20,9 @@ export function ModelsPage({ state }: { state: Snapshot }) {
   const [importing, setImporting] = useState(false);
   const [settingCore, setSettingCore] = useState(false);
   const busy = importing || settingCore || state.live2dCoreDownloading;
-  const importModel = async () => {
+  const importModel = async (source: "file" | "folder" = "file") => {
     setImporting(true);
-    await perform(() => api.importModel());
+    await perform(() => api.importModel(source));
     setImporting(false);
   };
   const importCore = async () => {
@@ -31,9 +31,12 @@ export function ModelsPage({ state }: { state: Snapshot }) {
     setSettingCore(false);
   };
   const downloadCore = async () => {
+    const runtime = state.live2dCoreError
+      ? state.live2dCoreErrorRuntime
+      : "modern";
     await perform(
-      () => api.downloadLive2DCore(),
-      "官方 Live2D 运行库已就绪，可以导入模型了",
+      () => api.downloadLive2DCore(runtime),
+      "Live2D 运行库已就绪，可以导入模型了",
     );
   };
   return (
@@ -176,7 +179,7 @@ export function ModelsPage({ state }: { state: Snapshot }) {
             <h3>Live2D 运行库</h3>
             <p role="status">
               {state.live2dCoreDownloading
-                ? "正在从 Live2D 官方下载运行库，请稍候…"
+                ? "正在下载 Live2D 运行库，请稍候…"
                 : state.live2dCoreReady
                   ? "已就绪，导入其他 Live2D 模型时会自动复用。"
                   : "只有模型文件也可以，首次导入时会自动下载官方运行库。"}
@@ -187,10 +190,24 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               </p>
             )}
             <small>
-              下载一次后可离线使用。已有运行库也可以从本地导入，移除角色不会丢失。
+              下载一次后可离线使用。新旧模型分别使用经过校验的运行库，移除角色不会丢失。
             </small>
+            <p>
+              Cubism 2：
+              {state.live2dLegacyReady
+                ? "兼容运行库已就绪"
+                : "首次导入旧版模型时自动下载兼容运行库"}
+            </p>
           </div>
           <div className="live2d-runtime-actions">
+            <button
+              className="button secondary"
+              disabled={busy}
+              onClick={() => void importModel("folder")}
+            >
+              <FolderInput size={16} />
+              导入模型文件夹
+            </button>
             <button
               className="button primary"
               onClick={() => {
@@ -217,6 +234,21 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               <FolderInput size={16} />
               {settingCore ? "正在设置…" : "从本地导入"}
             </button>
+            {!state.live2dLegacyReady && (
+              <button
+                className="button secondary"
+                disabled={busy}
+                onClick={() =>
+                  void perform(
+                    () => api.downloadLive2DCore("legacy"),
+                    "Cubism 2 兼容运行库已就绪",
+                  )
+                }
+              >
+                <Download size={16} />
+                下载旧版运行库
+              </button>
+            )}
           </div>
         </div>
         <div className="format-grid">
@@ -229,9 +261,8 @@ export function ModelsPage({ state }: { state: Snapshot }) {
             <PawPrint size={20} />
             <h4>Live2D</h4>
             <p>
-              选择
-              .model3.json，自动导入贴图与动作，首次自动下载运行库；暂不支持旧版
-              .model.json。
+              支持 Cubism 2 的 .model.json 和 Cubism 3 / 4 / 5 的 .model3.json。
+              可选择入口文件或完整模型文件夹，自动导入贴图、动作、表情与物理。
             </p>
           </div>
           <div>

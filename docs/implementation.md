@@ -19,6 +19,8 @@ Electron 主进程
 
 渲染器没有 Node.js 权限，两个窗口使用 context isolation 与 sandbox。所有文件操作、外部连接和密钥保管均在主进程；IPC 输入使用 Zod 校验。渲染器只能获得令牌是否存在的标记。
 
+Live2D 运行库属于可执行代码：Cubism 3 / 4 / 5 的本地 Core 导入和旧角色迁移只接受已核对的官方 SHA-256，或应用从固定官方 HTTPS 地址直接下载后记录的摘要；Cubism 2 运行库只接受固定 N.E.K.O 归档的 SHA-256。语法和 API 名称检查不作为信任依据。两套运行库独立缓存与加载，模型目录不能提供渲染器脚本地址，CSP 只允许共享运行库资源域执行脚本。未校验的运行库可通过衣橱中对应下载按钮恢复。运行库文件不随安装包分发，版本、摘要与来源见 [Live2D 兼容性说明](live2d-compatibility.md)。
+
 自定义 WSS 证书由主进程解析并按目标主机保存；账号 RPC 与聊天桥接共享同一 CA 提供器。传输仍保持 `rejectUnauthorized`，不覆盖主机名与有效期校验，不使用 `NODE_TLS_REJECT_UNAUTHORIZED=0`。证书正文不进入渲染器，界面只展示主机、有效期、数量和 SHA-256 指纹。
 
 ## 内核消息边界
@@ -53,7 +55,7 @@ Electron 主进程
 | 连续语音                                      | 本地 VAD + 兼容 ASR + MaiBot + TTS，有按句处理延迟；等待时继续聆听，持续开口停止本机播报，不承诺取消内核生成 |
 | 屏幕感知                                      | 手动截图 / 可选定时观察，不是视频帧流                                                                                         |
 | VRM                                           | 0.x / 1.x 渲染、表情、口型、视线与 spring bone 更新                                                                           |
-| Live2D                                        | Cubism 3 / 4；另已用官方 Core 5.1.0 实测 Cubism 5.0 导出的洛天依「翡翠石」。用户提供模型与 Core，其他 Cubism 5 模型需单独验证 |
+| Live2D                                        | Cubism 2 的 model.json 与 Cubism 3 / 4 / 5 的 model3.json；运行库自动下载、分别缓存，具体版本及实测模型见 [兼容性说明](live2d-compatibility.md) |
 | MMD                                           | PMX / PMD 渲染与常用 morph 映射；没有物理仿真或 VMD 时间线                                                                    |
 | 角色市场 / 云同步 / 手机端 / N.E.K.O 社交网络 | 不包含独立服务，通过未来扩展接入                                                                                              |
 | 自定义桌面工具 / 浏览器自动化                 | 由已配置的 MaiBot 插件提供，桌宠本身不执行任意代码指令                                                                        |

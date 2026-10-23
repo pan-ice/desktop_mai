@@ -37,6 +37,13 @@ function previewApi(): DesktopApi {
       window.addEventListener("mai:navigate", handler);
       return () => window.removeEventListener("mai:navigate", handler);
     },
+    onWindowHidden: (callback) => {
+      const handler = () => {
+        if (document.hidden) callback();
+      };
+      document.addEventListener("visibilitychange", handler);
+      return () => document.removeEventListener("visibilitychange", handler);
+    },
     updateSettings: async (patch) => {
       Object.assign(local.settings, patch);
       localStorage.setItem(
@@ -107,7 +114,6 @@ function previewApi(): DesktopApi {
     },
     hideWindow: unsupported,
     petDrag: () => {},
-    petInteractive: () => {},
     openDataFolder: unsupported,
     quit: unsupported,
   };

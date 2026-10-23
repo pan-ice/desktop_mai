@@ -27,6 +27,11 @@ const api: DesktopApi = {
     ipcRenderer.on("mai:page", handler);
     return () => ipcRenderer.removeListener("mai:page", handler);
   },
+  onWindowHidden: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("mai:window-hidden", handler);
+    return () => ipcRenderer.removeListener("mai:window-hidden", handler);
+  },
   updateSettings: (patch) => invoke("updateSettings", patch),
   setCredential: (key, value) => invoke("setCredential", key, value),
   connect: () => invoke("connect"),
@@ -52,9 +57,9 @@ const api: DesktopApi = {
   send: (input) => invoke("send", input),
   clearHistory: () => invoke("clearHistory"),
   exportHistory: () => invoke("exportHistory"),
-  importModel: () => invoke("importModel"),
+  importModel: (source) => invoke("importModel", source),
   importLive2DCore: () => invoke("importLive2DCore"),
-  downloadLive2DCore: () => invoke("downloadLive2DCore"),
+  downloadLive2DCore: (runtime) => invoke("downloadLive2DCore", runtime),
   removeModel: (id) => invoke("removeModel", id),
   screenSources: () => invoke("screenSources"),
   captureScreen: (id) => invoke("captureScreen", id),
@@ -87,7 +92,6 @@ const api: DesktopApi = {
   showDashboard: (page) => invoke("showDashboard", page),
   hideWindow: () => invoke("hideWindow"),
   petDrag: (action) => ipcRenderer.send("mai:drag", action),
-  petInteractive: (value) => ipcRenderer.send("mai:interactive", value),
   openDataFolder: () => invoke("openDataFolder"),
   quit: () => invoke("quit"),
 };
