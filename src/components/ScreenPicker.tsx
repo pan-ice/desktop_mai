@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Monitor, X } from "lucide-react";
-import { api, perform } from "../api";
+import { api } from "../api";
 import type { ScreenSource, Snapshot } from "../../shared/types";
+import { useDialog } from "../hooks/useDialog";
 
 export function ScreenPicker({
   state,
@@ -16,10 +17,22 @@ export function ScreenPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [enabled, setEnabled] = useState(state.settings.screenEnabled);
+  const [capturing, setCapturing] = useState(false);
+  const [operationError, setOperationError] = useState("");
+  const [reload, setReload] = useState(0);
+  const dialog = useDialog(onClose);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     setLoading(true);
+    setError("");
     void api
       .screenSources()
       .then((value) => {
@@ -34,10 +47,46 @@ export function ScreenPicker({
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, reload]);
+  const enable = async () => {
+    if (capturing) return;
+    setCapturing(true);
+    setOperationError("");
+    try {
+      await api.updateSettings({ screenEnabled: true });
+      if (mounted.current) setEnabled(true);
+    } catch (reason) {
+      if (mounted.current)
+        setOperationError(
+          reason instanceof Error ? reason.message : String(reason),
+        );
+    } finally {
+      if (mounted.current) setCapturing(false);
+    }
+  };
+  const capture = async (id: string) => {
+    if (capturing) return;
+    setCapturing(true);
+    setOperationError("");
+    try {
+      const image = await api.captureScreen(id);
+      if (!mounted.current) return;
+      await api.updateSettings({ screenSourceId: id });
+      if (mounted.current) onCapture(image);
+    } catch (reason) {
+      if (mounted.current)
+        setOperationError(
+          reason instanceof Error ? reason.message : String(reason),
+        );
+    } finally {
+      if (mounted.current) setCapturing(false);
+    }
+  };
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
+        ref={dialog}
+        tabIndex={-1}
         className="modal screen-modal"
         role="dialog"
         aria-modal="true"
@@ -60,6 +109,11 @@ export function ScreenPicker({
             <X size={19} />
           </button>
         </div>
+        {operationError && (
+          <p className="composer-error" role="alert">
+            {operationError} · 可以重试或选择其他窗口。
+          </p>
+        )}
         {!enabled ? (
           <div className="permission-prompt">
             <p>
@@ -67,12 +121,8 @@ export function ScreenPicker({
             </p>
             <button
               className="button primary"
-              onClick={() => {
-                void perform(async () => {
-                  await api.updateSettings({ screenEnabled: true });
-                  setEnabled(true);
-                });
-              }}
+              disabled={capturing}
+              onClick={() => void enable()}
             >
               开启并选择屏幕
             </button>
@@ -83,19 +133,22 @@ export function ScreenPicker({
             正在获取可分享的窗口…
           </div>
         ) : error ? (
-          <p className="inline-error">{error}</p>
+          <div className="inline-error" role="alert">
+            <p>{error}</p>
+            <button
+              className="button secondary"
+              onClick={() => setReload((value) => value + 1)}
+            >
+              重新获取屏幕
+            </button>
+          </div>
         ) : (
           <div className="screen-grid">
             {sources.map((source) => (
               <button
                 key={source.id}
-                onClick={() => {
-                  void perform(async () => {
-                    const image = await api.captureScreen(source.id);
-                    await api.updateSettings({ screenSourceId: source.id });
-                    onCapture(image);
-                  });
-                }}
+                disabled={capturing}
+                onClick={() => void capture(source.id)}
               >
                 <img src={source.thumbnail} alt={source.name} />
                 <span>{source.name}</span>

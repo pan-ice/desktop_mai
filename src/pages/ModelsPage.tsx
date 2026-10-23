@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowUpRight,
   Box,
@@ -6,38 +6,73 @@ import {
   Download,
   FileImage,
   FolderInput,
+  LoaderCircle,
   PawPrint,
   Plus,
   Trash2,
 } from "lucide-react";
-import { api, perform } from "../api";
+import { api, perform, showToast } from "../api";
 import { Avatar } from "../components/Avatar";
 import { Panel } from "../components/ui";
 import type { ImportedModel, Snapshot } from "../../shared/types";
 
 export function ModelsPage({ state }: { state: Snapshot }) {
   const [removing, setRemoving] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [settingCore, setSettingCore] = useState(false);
-  const busy = importing || settingCore || state.live2dCoreDownloading;
-  const importModel = async (source: "file" | "folder" = "file") => {
-    setImporting(true);
-    await perform(() => api.importModel(source));
-    setImporting(false);
+  const [operation, setOperation] = useState("");
+  const pending = useRef(false);
+  const busy = Boolean(operation) || state.live2dCoreDownloading;
+  const importing = operation.startsWith("import-");
+  const settingCore = operation === "core-import";
+  const activeModel = state.models.find(
+    (model) => model.id === state.settings.activeModelId,
+  );
+  const run = async (
+    name: string,
+    action: () => Promise<unknown>,
+    success?: string,
+  ) => {
+    if (pending.current || state.live2dCoreDownloading) return false;
+    pending.current = true;
+    setOperation(name);
+    try {
+      return await perform(action, success);
+    } finally {
+      pending.current = false;
+      setOperation("");
+    }
   };
-  const importCore = async () => {
-    setSettingCore(true);
-    await perform(() => api.importLive2DCore());
-    setSettingCore(false);
-  };
-  const downloadCore = async () => {
+  const importModel = (source: "file" | "folder" = "file") =>
+    run(`import-${source}`, () => api.importModel(source));
+  const importCore = () =>
+    run("core-import", async () => {
+      if (await api.importLive2DCore()) showToast("Live2D 运行库已导入");
+    });
+  const downloadCore = () => {
     const runtime = state.live2dCoreError
       ? state.live2dCoreErrorRuntime
       : "modern";
-    await perform(
+    return run(
+      `core-${runtime}`,
       () => api.downloadLive2DCore(runtime),
       "Live2D 运行库已就绪，可以导入模型了",
     );
+  };
+  const selectModel = (model: ImportedModel | null) => {
+    if (state.settings.activeModelId === (model?.id ?? null)) return;
+    setRemoving("");
+    return run(
+      `apply-${model?.id ?? "placeholder"}`,
+      () => api.updateSettings({ activeModelId: model?.id ?? null }),
+      model ? `正在使用 ${model.name}` : "已切换为默认占位角色",
+    );
+  };
+  const removeModel = async (model: ImportedModel) => {
+    const removed = await run(
+      `remove-${model.id}`,
+      () => api.removeModel(model.id),
+      "已移除角色，原始模型文件不受影响",
+    );
+    setRemoving(removed ? "" : model.id);
   };
   return (
     <>
@@ -54,7 +89,11 @@ export function ModelsPage({ state }: { state: Snapshot }) {
           }}
           disabled={busy}
         >
-          <Plus size={17} />
+          {busy ? (
+            <LoaderCircle size={17} className="spin" />
+          ) : (
+            <Plus size={17} />
+          )}
           {state.live2dCoreDownloading
             ? "正在下载运行库…"
             : importing
@@ -62,7 +101,23 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               : "导入角色"}
         </button>
       </div>
-      <div className="model-grid">
+      <div className="model-operation-status" role="status">
+        <span className="model-current-badge">
+          <Check size={15} /> 当前使用：{activeModel?.name ?? "默认占位角色"}
+        </span>
+        <p>
+          {operation.startsWith("apply-")
+            ? "正在切换角色…"
+            : operation.startsWith("remove-")
+              ? "正在移除角色…"
+              : importing
+                ? "选择文件后开始导入，较大的模型需要稍等片刻。"
+                : state.live2dCoreDownloading || operation.startsWith("core-")
+                  ? "正在准备 Live2D 运行库…"
+                  : "选择「使用」切换桌宠；移除操作只会删除应用内的副本。"}
+        </p>
+      </div>
+      <div className="model-grid" aria-busy={busy}>
         <div
           className={`model-card ${!state.settings.activeModelId ? "chosen" : ""}`}
         >
@@ -82,16 +137,23 @@ export function ModelsPage({ state }: { state: Snapshot }) {
             <button
               className={`model-select ${!state.settings.activeModelId ? "selected" : ""}`}
               title="使用默认占位"
-              aria-label="使用默认占位"
-              onClick={() => {
-                void perform(() => api.updateSettings({ activeModelId: null }));
-              }}
+              aria-label={
+                !state.settings.activeModelId
+                  ? "当前使用默认占位角色"
+                  : "使用默认占位角色"
+              }
+              aria-pressed={!state.settings.activeModelId}
+              disabled={busy || !state.settings.activeModelId}
+              onClick={() => void selectModel(null)}
             >
-              {!state.settings.activeModelId ? (
+              {operation === "apply-placeholder" ? (
+                <LoaderCircle size={17} className="spin" />
+              ) : !state.settings.activeModelId ? (
                 <Check size={17} />
               ) : (
                 <Plus size={17} />
               )}
+              <span>{!state.settings.activeModelId ? "使用中" : "使用"}</span>
             </button>
           </div>
         </div>
@@ -109,18 +171,27 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               <button
                 className={`model-select ${state.settings.activeModelId === model.id ? "selected" : ""}`}
                 title={`使用 ${model.name}`}
-                aria-label={`使用 ${model.name}`}
-                onClick={() => {
-                  void perform(() =>
-                    api.updateSettings({ activeModelId: model.id }),
-                  );
-                }}
+                aria-label={
+                  state.settings.activeModelId === model.id
+                    ? `当前使用 ${model.name}`
+                    : `使用 ${model.name}`
+                }
+                aria-pressed={state.settings.activeModelId === model.id}
+                disabled={busy || state.settings.activeModelId === model.id}
+                onClick={() => void selectModel(model)}
               >
-                {state.settings.activeModelId === model.id ? (
+                {operation === `apply-${model.id}` ? (
+                  <LoaderCircle size={17} className="spin" />
+                ) : state.settings.activeModelId === model.id ? (
                   <Check size={17} />
                 ) : (
                   <Plus size={17} />
                 )}
+                <span>
+                  {state.settings.activeModelId === model.id
+                    ? "使用中"
+                    : "使用"}
+                </span>
               </button>
             </div>
             <button
@@ -133,22 +204,53 @@ export function ModelsPage({ state }: { state: Snapshot }) {
                   ? `确认删除 ${model.name}`
                   : `删除 ${model.name}`
               }
-              onBlur={() => setRemoving("")}
+              disabled={busy}
+              onBlur={(event) => {
+                if (
+                  !event.currentTarget.parentElement?.contains(
+                    event.relatedTarget as Node | null,
+                  )
+                )
+                  setRemoving("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setRemoving("");
+              }}
               onClick={() => {
                 if (removing !== model.id) {
                   setRemoving(model.id);
                   return;
                 }
-                void perform(
-                  () => api.removeModel(model.id),
-                  "已移除角色，原始模型文件不受影响",
-                );
-                setRemoving("");
+                void removeModel(model);
               }}
             >
-              <Trash2 size={13} />
-              {removing === model.id ? "确认移除" : "移除"}
+              {operation === `remove-${model.id}` ? (
+                <LoaderCircle size={13} className="spin" />
+              ) : (
+                <Trash2 size={13} />
+              )}
+              {operation === `remove-${model.id}`
+                ? "正在移除…"
+                : removing === model.id
+                  ? "确认移除"
+                  : "移除"}
             </button>
+            {removing === model.id && (
+              <p className="model-remove-confirm" role="status">
+                {state.settings.activeModelId === model.id
+                  ? "移除后将恢复默认占位角色。"
+                  : "只移除应用内的副本。"}{" "}
+                再点一次确认，按 Esc 取消。
+                <button
+                  type="button"
+                  className="text-button small"
+                  disabled={busy}
+                  onClick={() => setRemoving("")}
+                >
+                  取消
+                </button>
+              </p>
+            )}
           </div>
         ))}
         <button
@@ -205,8 +307,14 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               disabled={busy}
               onClick={() => void importModel("folder")}
             >
-              <FolderInput size={16} />
-              导入模型文件夹
+              {operation === "import-folder" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <FolderInput size={16} />
+              )}
+              {operation === "import-folder"
+                ? "正在导入文件夹…"
+                : "导入模型文件夹"}
             </button>
             <button
               className="button primary"
@@ -215,8 +323,13 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               }}
               disabled={busy}
             >
-              <Download size={16} />
-              {state.live2dCoreDownloading
+              {operation === "core-modern" || state.live2dCoreDownloading ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Download size={16} />
+              )}
+              {(operation.startsWith("core-") && !settingCore) ||
+              state.live2dCoreDownloading
                 ? "正在下载…"
                 : state.live2dCoreError
                   ? "重试下载"
@@ -231,7 +344,11 @@ export function ModelsPage({ state }: { state: Snapshot }) {
               }}
               disabled={busy}
             >
-              <FolderInput size={16} />
+              {settingCore ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <FolderInput size={16} />
+              )}
               {settingCore ? "正在设置…" : "从本地导入"}
             </button>
             {!state.live2dLegacyReady && (
@@ -239,14 +356,21 @@ export function ModelsPage({ state }: { state: Snapshot }) {
                 className="button secondary"
                 disabled={busy}
                 onClick={() =>
-                  void perform(
+                  void run(
+                    "core-legacy",
                     () => api.downloadLive2DCore("legacy"),
                     "Cubism 2 兼容运行库已就绪",
                   )
                 }
               >
-                <Download size={16} />
-                下载旧版运行库
+                {operation === "core-legacy" ? (
+                  <LoaderCircle size={16} className="spin" />
+                ) : (
+                  <Download size={16} />
+                )}
+                {operation === "core-legacy"
+                  ? "正在下载旧版运行库…"
+                  : "下载旧版运行库"}
               </button>
             )}
           </div>

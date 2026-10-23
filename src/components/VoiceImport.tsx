@@ -9,7 +9,7 @@ import {
   voiceImportAudioRules,
   type VoiceImportProvider,
 } from "../../shared/tts";
-import type { Snapshot } from "../../shared/types";
+import type { Settings, Snapshot } from "../../shared/types";
 import { Field } from "./ui";
 import { VoiceServiceGuidance } from "./ModelGuidance";
 import { voiceServiceGuides } from "../../shared/model-guidance";
@@ -22,13 +22,38 @@ export function VoiceImport({
   state,
   busy,
   onBusyChange,
+  onBeforeApply,
 }: {
   state: Snapshot;
   busy: boolean;
   onBusyChange: (value: boolean) => void;
+  onBeforeApply?: () => (settings: Settings) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const working = useRef(false);
+  const pendingApplication = useRef<{
+    id: string;
+    apply: (settings: Settings) => void;
+  } | null>(null);
+  const applyPending = (snapshot: Snapshot) => {
+    const pending = pendingApplication.current;
+    if (!pending) return;
+    const voice = snapshot.clonedVoices.find((item) => item.id === pending.id);
+    if (!voice) return;
+    if (
+      voice.status === "ready" &&
+      snapshot.settings.ttsEngine === "api" &&
+      snapshot.settings.ttsProvider === voice.provider &&
+      JSON.stringify(ttsProfile(snapshot.settings)) ===
+        JSON.stringify(voice.profile)
+    ) {
+      pendingApplication.current = null;
+      pending.apply(snapshot.settings);
+    } else if (voice.status === "failed" || voice.autoUse === false) {
+      pendingApplication.current = null;
+    }
+  };
+  useEffect(() => applyPending(state), [state.settings, state.clonedVoices]);
   const [provider, setProvider] = useState<VoiceImportProvider>(
     state.settings.ttsProvider === "openai"
       ? "mimo"
@@ -150,6 +175,7 @@ export function VoiceImport({
           await api.setCredential(spec.key, key.trim());
           setKey("");
         }
+        const apply = onBeforeApply?.();
         const voice = await api.importVoice({
           provider,
           audio: { name: file.name, data },
@@ -162,7 +188,14 @@ export function VoiceImport({
         if (voice.status === "failed")
           throw new Error("音色准备未通过，请换一段清晰的说话录音后重试。");
         const current = await api.snapshot();
-        if (voice.status === "ready") stopSpeech();
+        if (voice.status === "ready") {
+          pendingApplication.current = null;
+          apply?.(current.settings);
+          stopSpeech();
+        } else if (voice.status === "pending" && apply) {
+          pendingApplication.current = { id: voice.id, apply };
+          applyPending(current);
+        }
         showToast(
           voice.status === "pending"
             ? `「${voice.name}」正在准备，完成后会自动选用`
@@ -338,8 +371,9 @@ export function VoiceImport({
               );
               if (!voice || voice.status !== "ready") return;
               void run("正在切换音色…", async () => {
+                const apply = onBeforeApply?.();
                 const current = await api.snapshot();
-                await api.updateSettings({
+                const updated = await api.updateSettings({
                   ttsEngine: "api",
                   ttsProvider: voice.provider,
                   ttsProfiles: {
@@ -349,6 +383,8 @@ export function VoiceImport({
                   voiceEnabled:
                     current.credentials[ttsProviders[voice.provider].key],
                 });
+                pendingApplication.current = null;
+                apply?.(updated.settings);
                 stopSpeech();
                 showToast(`已选用「${voice.name}」`);
               });

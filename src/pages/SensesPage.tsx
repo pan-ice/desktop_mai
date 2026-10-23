@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AudioLines,
   Camera,
@@ -19,12 +19,19 @@ import { useRecorder } from "../hooks/useVoice";
 import { TtsSettings } from "../components/TtsSettings";
 import { ModelGuidance } from "../components/ModelGuidance";
 import { modelGuideLinks } from "../../shared/model-guidance";
+import { mergeSettingsDraft } from "../../shared/settings-draft";
 import type { Settings, Snapshot } from "../../shared/types";
 
 export function useSettingsDraft(settings: Settings) {
   const saved = JSON.stringify(settings);
   const [draft, setDraft] = useState(settings);
-  useEffect(() => setDraft(JSON.parse(saved) as Settings), [saved]);
+  const previous = useRef(settings);
+  useEffect(() => {
+    const updated = JSON.parse(saved) as Settings;
+    const baseline = previous.current;
+    previous.current = updated;
+    setDraft((current) => mergeSettingsDraft(current, baseline, updated));
+  }, [saved]);
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
   return { draft, change };

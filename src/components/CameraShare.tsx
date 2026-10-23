@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, LoaderCircle, Send, X } from "lucide-react";
-import { api, perform } from "../api";
+import { api, showToast } from "../api";
 import type { Snapshot } from "../../shared/types";
+import { useDialog } from "../hooks/useDialog";
 
 export function CameraShare({
   state,
@@ -11,6 +12,16 @@ export function CameraShare({
   onClose: () => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  const dialog = useDialog(onClose);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
@@ -91,9 +102,28 @@ export function CameraShare({
     canvas.getContext("2d")!.drawImage(source, 0, 0);
     setImage(canvas.toDataURL("image/jpeg", 0.82));
   };
+  const send = async () => {
+    if (sending || state.connection.phase !== "connected") return;
+    setSending(true);
+    setSendError("");
+    try {
+      if (!state.settings.screenEnabled)
+        await api.updateSettings({ screenEnabled: true });
+      await api.send({ text, image, source: "screen" });
+      if (mounted.current) onClose();
+      showToast("照片已发送给 MaiBot");
+    } catch (reason) {
+      if (mounted.current)
+        setSendError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) setSending(false);
+    }
+  };
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
+        ref={dialog}
+        tabIndex={-1}
         className="modal camera-modal"
         role="dialog"
         aria-modal="true"
@@ -133,6 +163,8 @@ export function CameraShare({
         {image ? (
           <textarea
             aria-label="照片附言"
+            disabled={sending}
+            maxLength={12000}
             value={text}
             onChange={(event) => setText(event.target.value)}
             rows={2}
@@ -153,27 +185,34 @@ export function CameraShare({
             </select>
           )
         )}
+        {sendError && (
+          <p className="composer-error" role="alert">
+            {sendError} · 照片已保留，可重新发送。
+          </p>
+        )}
         <div className="modal-footer">
           <span>关闭窗口立即释放摄像头</span>
           {image ? (
             <div className="heading-actions">
-              <button className="button secondary" onClick={() => setImage("")}>
+              <button
+                className="button secondary"
+                disabled={sending}
+                onClick={() => setImage("")}
+              >
                 重新拍照
               </button>
               <button
                 className="button primary"
-                disabled={state.connection.phase !== "connected"}
-                onClick={() => {
-                  void perform(async () => {
-                    if (!state.settings.screenEnabled)
-                      await api.updateSettings({ screenEnabled: true });
-                    await api.send({ text, image, source: "screen" });
-                    onClose();
-                  }, "照片已发送给 MaiBot");
-                }}
+                disabled={sending || state.connection.phase !== "connected"}
+                aria-busy={sending}
+                onClick={() => void send()}
               >
-                <Send size={14} />
-                发送给{state.settings.nickname}
+                {sending ? (
+                  <LoaderCircle size={14} className="spin" />
+                ) : (
+                  <Send size={14} />
+                )}
+                {sending ? "正在发送…" : `发送给${state.settings.nickname}`}
               </button>
             </div>
           ) : (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   LoaderCircle,
   Play,
@@ -19,7 +19,10 @@ import type { Snapshot } from "../../shared/types";
 
 export function CorePage({ state }: { state: Snapshot }) {
   const { draft, change } = useSettingsDraft(state.settings);
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState("");
+  const pending = useRef(false);
+  const busy = Boolean(operation);
+  const addressDirty = draft.serverUrl !== state.settings.serverUrl;
   const connected = state.connection.phase === "connected";
   const selectedAccount =
     state.settings.connectionMode === "server" &&
@@ -43,21 +46,37 @@ export function CorePage({ state }: { state: Snapshot }) {
   const certificateExpired = Boolean(
     certificate && certificate.validTo <= Date.now(),
   );
-  const saveConnection = async () => {
-    setBusy(true);
+  const run = async (
+    name: string,
+    action: () => Promise<unknown>,
+    success?: string,
+  ) => {
+    if (pending.current) return;
+    pending.current = true;
+    setOperation(name);
     try {
-      await perform(async () => {
-        const updated = await api.updateSettings({
-          connectionMode: "server",
-          serverUrl: draft.serverUrl,
-        });
-        if (updated.credentials.serverToken && updated.settings.serverAccountId)
-          await api.connect();
-      });
+      await perform(action, success);
     } finally {
-      setBusy(false);
+      pending.current = false;
+      setOperation("");
     }
   };
+  const saveConnection = () =>
+    run("connection", async () => {
+      const updated = await api.updateSettings({
+        connectionMode: "server",
+        serverUrl: draft.serverUrl.trim(),
+      });
+      change("serverUrl", updated.settings.serverUrl);
+      if (updated.credentials.serverToken && updated.settings.serverAccountId) {
+        await api.connect();
+        showToast("服务器地址已保存，连接请求已发送");
+      } else if (updated.credentials.serverToken) {
+        showToast("服务器地址已保存，请在「桌宠账号」选择或新建账号");
+      } else {
+        showToast("服务器地址已保存，在「桌宠账号」登录 QQ 后即可连接");
+      }
+    });
 
   return (
     <>
@@ -85,6 +104,7 @@ export function CorePage({ state }: { state: Snapshot }) {
                 event.preventDefault();
                 void saveConnection();
               }}
+              aria-busy={busy}
             >
               <Field
                 label="服务器地址"
@@ -93,6 +113,7 @@ export function CorePage({ state }: { state: Snapshot }) {
                 <input
                   type="url"
                   required
+                  disabled={busy}
                   value={draft.serverUrl}
                   placeholder="ws://192.168.1.10:18766/desktop"
                   onChange={(event) => change("serverUrl", event.target.value)}
@@ -144,14 +165,22 @@ export function CorePage({ state }: { state: Snapshot }) {
                         : "请先填写 wss:// 服务器地址"
                     }
                     onClick={() => {
-                      setBusy(true);
-                      void perform(async () => {
+                      void run("certificate-import", async () => {
                         if (await api.importServerCertificate(draft.serverUrl))
                           showToast("自定义 WSS 证书已导入");
-                      }).finally(() => setBusy(false));
+                      });
                     }}
                   >
-                    <Upload size={14} /> {certificate ? "替换" : "导入"}
+                    {operation === "certificate-import" ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <Upload size={14} />
+                    )}
+                    {operation === "certificate-import"
+                      ? "正在导入…"
+                      : certificate
+                        ? "替换"
+                        : "导入"}
                   </button>
                   {certificate && (
                     <button
@@ -159,14 +188,21 @@ export function CorePage({ state }: { state: Snapshot }) {
                       className="text-button small muted"
                       disabled={busy}
                       onClick={() => {
-                        setBusy(true);
-                        void perform(
+                        void run(
+                          "certificate-remove",
                           () => api.removeServerCertificate(draft.serverUrl),
                           "自定义 WSS 证书已移除",
-                        ).finally(() => setBusy(false));
+                        );
                       }}
                     >
-                      <Trash2 size={13} /> 移除
+                      {operation === "certificate-remove" ? (
+                        <LoaderCircle size={13} className="spin" />
+                      ) : (
+                        <Trash2 size={13} />
+                      )}
+                      {operation === "certificate-remove"
+                        ? "正在移除…"
+                        : "移除"}
                     </button>
                   )}
                 </span>
@@ -176,13 +212,37 @@ export function CorePage({ state }: { state: Snapshot }) {
                 或主机，客户端仍会校验证书有效期和主机名。
               </p>
               <div className="form-actions">
+                <p
+                  className={`form-state ${addressDirty ? "dirty" : ""}`}
+                  role="status"
+                >
+                  {operation === "connection"
+                    ? "正在保存并检查连接…"
+                    : addressDirty
+                      ? "地址尚未保存，离开本页会放弃修改。"
+                      : state.settings.serverAccountId
+                        ? "使用已保存的地址与账号连接。"
+                        : "保存地址后，在「桌宠账号」完成登录与选择。"}
+                </p>
                 {active && (
                   <button
                     type="button"
                     className="button secondary"
-                    onClick={() => void perform(() => api.disconnect())}
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        "disconnect",
+                        () => api.disconnect(),
+                        "已断开服务器连接",
+                      )
+                    }
                   >
-                    <Square size={14} /> 断开
+                    {operation === "disconnect" ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <Square size={14} />
+                    )}
+                    {operation === "disconnect" ? "正在断开…" : "断开"}
                   </button>
                 )}
                 <button
@@ -190,18 +250,20 @@ export function CorePage({ state }: { state: Snapshot }) {
                   className="button primary"
                   disabled={busy || !draft.serverUrl.trim()}
                 >
-                  {busy ? (
+                  {operation === "connection" ? (
                     <LoaderCircle size={16} className="spin" />
                   ) : selectedAccount ? (
                     <RefreshCw size={16} />
                   ) : (
                     <Plug size={16} />
                   )}
-                  {selectedAccount
-                    ? connected
-                      ? "重新连接服务器"
-                      : "连接服务器"
-                    : "保存地址"}
+                  {operation === "connection"
+                    ? "正在保存…"
+                    : selectedAccount
+                      ? connected
+                        ? "重新连接服务器"
+                        : "连接服务器"
+                      : "保存地址"}
                 </button>
               </div>
             </form>
@@ -217,19 +279,23 @@ export function CorePage({ state }: { state: Snapshot }) {
                 className="button secondary"
                 disabled={busy}
                 onClick={() => {
-                  setBusy(true);
-                  void perform(async () => {
+                  void run("local", async () => {
                     const url = await api.prepareLocalServer();
-                    if (url) change("serverUrl", url);
-                  }).finally(() => setBusy(false));
+                    if (url) {
+                      change("serverUrl", url);
+                      showToast("本机连接已准备好，可在「桌宠账号」继续登录");
+                    }
+                  });
                 }}
               >
-                {busy ? (
+                {operation === "local" ? (
                   <LoaderCircle size={16} className="spin" />
                 ) : (
                   <Play size={16} />
                 )}
-                本机测试（自动初始化）
+                {operation === "local"
+                  ? "正在准备本机连接…"
+                  : "本机测试（自动初始化）"}
               </button>
             </div>
           </details>

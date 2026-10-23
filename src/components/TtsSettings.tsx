@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Square, Volume2 } from "lucide-react";
 import { api, perform, showToast } from "../api";
 import { speak, stopSpeech } from "../hooks/useVoice";
 import { Field, Panel, SettingToggle, Toggle } from "./ui";
 import { speechDeliveryHint } from "../../shared/speech-delivery";
+import {
+  mergeAppliedVoiceDraft,
+  mergeSettingsDraft,
+} from "../../shared/settings-draft";
 import { VoiceImport } from "./VoiceImport";
 import { VoiceServiceGuidance } from "./ModelGuidance";
 import {
@@ -20,7 +24,13 @@ import type { Settings, Snapshot } from "../../shared/types";
 export function TtsSettings({ state }: { state: Snapshot }) {
   const saved = JSON.stringify(state.settings);
   const [draft, setDraft] = useState(state.settings);
-  useEffect(() => setDraft(JSON.parse(saved) as Settings), [saved]);
+  const previous = useRef(state.settings);
+  useEffect(() => {
+    const updated = JSON.parse(saved) as Settings;
+    const baseline = previous.current;
+    previous.current = updated;
+    setDraft((current) => mergeSettingsDraft(current, baseline, updated));
+  }, [saved]);
   const [keys, setKeys] = useState<Partial<Record<TtsProvider, string>>>({});
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [name, setName] = useState("");
@@ -70,9 +80,14 @@ export function TtsSettings({ state }: { state: Snapshot }) {
     return () => URL.revokeObjectURL(url);
   }, [file]);
   const save = async () => {
-    if (keys[provider]) {
-      await api.setCredential(spec.key, keys[provider]!);
-      setKeys((current) => ({ ...current, [provider]: "" }));
+    const submittedKey = keys[provider];
+    if (submittedKey) {
+      await api.setCredential(spec.key, submittedKey);
+      setKeys((current) =>
+        current[provider] === submittedKey
+          ? { ...current, [provider]: "" }
+          : current,
+      );
     }
     await api.updateSettings({
       ttsEngine: draft.ttsEngine,
@@ -87,12 +102,23 @@ export function TtsSettings({ state }: { state: Snapshot }) {
       speechVolume: draft.speechVolume,
     });
   };
+  const beforeVoiceApply = () => {
+    const baseline = draft;
+    return (applied: Settings) =>
+      setDraft((current) => mergeAppliedVoiceDraft(current, baseline, applied));
+  };
   const useVoice = async (voice: ClonedVoice) => {
-    await api.updateSettings({
+    const apply = beforeVoiceApply();
+    const current = await api.snapshot();
+    const updated = await api.updateSettings({
       ttsEngine: "api",
       ttsProvider: voice.provider,
-      ttsProfiles: { ...draft.ttsProfiles, [voice.provider]: voice.profile },
+      ttsProfiles: {
+        ...current.settings.ttsProfiles,
+        [voice.provider]: voice.profile,
+      },
     });
+    apply(updated.settings);
   };
   const clone = async () => {
     setBusy(true);
@@ -131,7 +157,12 @@ export function TtsSettings({ state }: { state: Snapshot }) {
       subtitle="导入喜欢的声音，让之后的回复用这个声音朗读。"
       action={<Volume2 size={19} className="muted" />}
     >
-      <VoiceImport state={state} busy={busy} onBusyChange={setBusy} />
+      <VoiceImport
+        state={state}
+        busy={busy}
+        onBusyChange={setBusy}
+        onBeforeApply={beforeVoiceApply}
+      />
       <SettingToggle
         state={state}
         name="voiceEnabled"

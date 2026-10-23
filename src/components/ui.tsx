@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, CircleAlert, X } from "lucide-react";
 import { api, perform } from "../api";
 import type { Settings, Snapshot } from "../../shared/types";
@@ -16,11 +16,12 @@ export function Toggle({
   onChange: (value: boolean) => void;
   disabled?: boolean;
 }) {
+  const hintId = useId();
   return (
     <label className={`toggle-row ${disabled ? "disabled" : ""}`}>
       <span>
         <strong>{label}</strong>
-        {hint && <small>{hint}</small>}
+        {hint && <small id={hintId}>{hint}</small>}
       </span>
       <button
         type="button"
@@ -28,6 +29,7 @@ export function Toggle({
         role="switch"
         aria-label={label}
         aria-checked={checked}
+        aria-describedby={hint ? hintId : undefined}
         disabled={disabled}
         onClick={() => onChange(!checked)}
       >
@@ -48,13 +50,24 @@ export function SettingToggle({
   label: string;
   hint?: string;
 }) {
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
   return (
     <Toggle
       label={label}
       hint={hint}
       checked={Boolean(state.settings[name])}
+      disabled={saving}
       onChange={(value) => {
-        void perform(() => api.updateSettings({ [name]: value }));
+        if (pending.current) return;
+        pending.current = true;
+        setSaving(true);
+        void perform(() => api.updateSettings({ [name]: value })).finally(
+          () => {
+            pending.current = false;
+            setSaving(false);
+          },
+        );
       }}
     />
   );
@@ -96,7 +109,7 @@ export function Panel({
       {title && (
         <div className="panel-heading">
           <div>
-            <h3>{title}</h3>
+            <h2>{title}</h2>
             {subtitle && <p>{subtitle}</p>}
           </div>
           {action}
@@ -138,7 +151,8 @@ export function Toasts() {
     const handler = (event: Event) => {
       setToast((event as CustomEvent).detail);
       clearTimeout(timeout);
-      timeout = setTimeout(() => setToast(null), 6500);
+      if (!(event as CustomEvent).detail.error)
+        timeout = setTimeout(() => setToast(null), 6500);
     };
     window.addEventListener("mai:toast", handler);
     return () => {
@@ -150,6 +164,7 @@ export function Toasts() {
     <div
       className={`toast ${toast.error ? "error" : ""}`}
       role={toast.error ? "alert" : "status"}
+      aria-atomic="true"
     >
       {toast.error ? <CircleAlert size={18} /> : <Check size={18} />}
       <span>{toast.text}</span>

@@ -1,18 +1,87 @@
+import { useRef, useState } from "react";
 import {
   FolderOpen,
   Heart,
   Keyboard,
+  LoaderCircle,
   Monitor,
   PawPrint,
   SlidersHorizontal,
 } from "lucide-react";
-import { api, perform } from "../api";
+import { api, perform, showToast } from "../api";
 import { Field, Panel, SettingToggle } from "../components/ui";
 import { useSettingsDraft } from "./SensesPage";
 import type { Snapshot } from "../../shared/types";
 
 export function SettingsPage({ state }: { state: Snapshot }) {
   const { draft, change } = useSettingsDraft(state.settings);
+  const [savingNames, setSavingNames] = useState(false);
+  const [savingScale, setSavingScale] = useState(false);
+  const namesPending = useRef(false);
+  const scalePending = useRef(false);
+  const queuedScale = useRef<number | undefined>(undefined);
+  const scaleInput = useRef(draft.petScale);
+  const scaleValue = scalePending.current ? scaleInput.current : draft.petScale;
+  const namesDirty =
+    draft.nickname !== state.settings.nickname ||
+    draft.userName !== state.settings.userName;
+  const scaleDirty = scaleValue !== state.settings.petScale;
+  const saveNames = async () => {
+    if (namesPending.current || !namesDirty) return;
+    const nickname = draft.nickname.trim();
+    const userName = draft.userName.trim();
+    if (!nickname || !userName) {
+      showToast("请填写桌宠的名字和你的名字", true);
+      return;
+    }
+    namesPending.current = true;
+    setSavingNames(true);
+    try {
+      const saved = await perform(
+        () => api.updateSettings({ nickname, userName }),
+        "称呼已保存",
+      );
+      if (saved) {
+        change("nickname", nickname);
+        change("userName", userName);
+      }
+    } finally {
+      namesPending.current = false;
+      setSavingNames(false);
+    }
+  };
+  const saveScale = async (value: number) => {
+    scaleInput.current = value;
+    // 先记录最新提交：旧请求尚未完成时，回到原值也需要排队保存。
+    queuedScale.current = value;
+    if (scalePending.current) return;
+    if (value === state.settings.petScale) {
+      queuedScale.current = undefined;
+      return;
+    }
+    scalePending.current = true;
+    setSavingScale(true);
+    try {
+      while (queuedScale.current !== undefined) {
+        const next: number = queuedScale.current;
+        queuedScale.current = undefined;
+        let savedScale: number = next;
+        const saved: boolean = await perform(async () => {
+          const updated = await api.updateSettings({ petScale: next });
+          savedScale = updated.settings.petScale;
+        });
+        // 失败后保留草稿，下一次调整、松开或失焦时可重试，避免自动反复提交。
+        if (!saved) break;
+        if (queuedScale.current === savedScale) queuedScale.current = undefined;
+      }
+    } finally {
+      queuedScale.current = undefined;
+      // 保存回执可能合并旧快照；显示和保留用户在请求期间继续调整的最终值。
+      change("petScale", scaleInput.current);
+      scalePending.current = false;
+      setSavingScale(false);
+    }
+  };
   return (
     <>
       <div className="page-heading">
@@ -36,21 +105,16 @@ export function SettingsPage({ state }: { state: Snapshot }) {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                void perform(
-                  () =>
-                    api.updateSettings({
-                      nickname: draft.nickname,
-                      userName: draft.userName,
-                    }),
-                  "称呼已保存",
-                );
+                void saveNames();
               }}
+              aria-busy={savingNames}
             >
               <div className="form-grid">
                 <Field label="桌宠的名字">
                   <input
                     required
                     maxLength={40}
+                    disabled={savingNames}
                     value={draft.nickname}
                     onChange={(event) => change("nickname", event.target.value)}
                   />
@@ -59,13 +123,35 @@ export function SettingsPage({ state }: { state: Snapshot }) {
                   <input
                     required
                     maxLength={40}
+                    disabled={savingNames}
                     value={draft.userName}
                     onChange={(event) => change("userName", event.target.value)}
                   />
                 </Field>
               </div>
               <div className="form-actions">
-                <button className="button primary">保存称呼</button>
+                <p
+                  className={`form-state ${namesDirty ? "dirty" : ""}`}
+                  role="status"
+                >
+                  {savingNames
+                    ? "正在保存称呼…"
+                    : namesDirty
+                      ? "称呼尚未保存，离开本页会放弃修改。"
+                      : "称呼已保存"}
+                </p>
+                <button
+                  className="button primary"
+                  disabled={
+                    savingNames ||
+                    !namesDirty ||
+                    !draft.nickname.trim() ||
+                    !draft.userName.trim()
+                  }
+                >
+                  {savingNames && <LoaderCircle size={15} className="spin" />}
+                  {savingNames ? "正在保存…" : "保存称呼"}
+                </button>
               </div>
             </form>
           </Panel>
@@ -97,28 +183,51 @@ export function SettingsPage({ state }: { state: Snapshot }) {
               label="鼠标穿透"
               hint="开启后角色、气泡和按钮都不挡鼠标；Ctrl + Shift + M 恢复交互。"
             />
-            <Field label={`角色大小 · ${Math.round(draft.petScale * 100)}%`}>
+            <Field label={`角色大小 · ${Math.round(scaleValue * 100)}%`}>
               <input
                 type="range"
                 min="0.5"
                 max="1.6"
                 step="0.05"
-                value={draft.petScale}
-                onChange={(event) =>
-                  change("petScale", Number(event.target.value))
+                value={scaleValue}
+                aria-busy={savingScale}
+                onChange={(event) => {
+                  scaleInput.current = Number(event.target.value);
+                  change("petScale", scaleInput.current);
+                }}
+                onPointerUp={(event) => {
+                  void saveScale(Number(event.currentTarget.value));
+                }}
+                onKeyUp={(event) => {
+                  if (
+                    [
+                      "ArrowLeft",
+                      "ArrowRight",
+                      "ArrowUp",
+                      "ArrowDown",
+                      "Home",
+                      "End",
+                      "PageUp",
+                      "PageDown",
+                    ].includes(event.key)
+                  )
+                    void saveScale(Number(event.currentTarget.value));
+                }}
+                onBlur={(event) =>
+                  void saveScale(Number(event.currentTarget.value))
                 }
-                onPointerUp={() => {
-                  void perform(() =>
-                    api.updateSettings({ petScale: draft.petScale }),
-                  );
-                }}
-                onKeyUp={() => {
-                  void perform(() =>
-                    api.updateSettings({ petScale: draft.petScale }),
-                  );
-                }}
               />
             </Field>
+            <p
+              className={`form-state ${scaleDirty ? "dirty" : ""}`}
+              role="status"
+            >
+              {savingScale
+                ? "正在保存角色大小…"
+                : scaleDirty
+                  ? "大小尚未保存，可重新调整后松开保存。"
+                  : "松开滑块或完成键盘调整后自动保存。"}
+            </p>
             <SettingToggle
               state={state}
               name="reducedMotion"

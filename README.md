@@ -189,6 +189,7 @@ npm run test:adapter
 npm run test:desktop
 npm run test:interaction
 npm run test:lifecycle
+npm run test:ui
 npm run test:pet-click-through
 npm run test:pet-topmost
 ```
