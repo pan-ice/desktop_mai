@@ -28,6 +28,7 @@ export const defaultSettings: Settings = {
   ttsNativeOutput: true,
   ttsNaturalSpeech: false,
   ttsPreloadNext: true,
+  ttsReplyBufferSize: 2,
   ttsCloneFidelity: false,
   ttsProfiles: {},
   systemVoice: "",

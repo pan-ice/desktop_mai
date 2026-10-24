@@ -88,6 +88,7 @@ export const settingsPatchSchema = z
     ttsNativeOutput: z.boolean(),
     ttsNaturalSpeech: z.boolean(),
     ttsPreloadNext: z.boolean(),
+    ttsReplyBufferSize: z.number().int().min(0).max(5),
     ttsCloneFidelity: z.boolean(),
     ttsProfiles: z.record(ttsProviderSchema, ttsProfileSchema),
     systemVoice: z.string().max(300),

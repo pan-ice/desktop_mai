@@ -103,6 +103,7 @@ export function TtsSettings({ state }: { state: Snapshot }) {
       ttsNativeOutput: draft.ttsNativeOutput,
       ttsNaturalSpeech: draft.ttsNaturalSpeech,
       ttsPreloadNext: draft.ttsPreloadNext,
+      ttsReplyBufferSize: draft.ttsReplyBufferSize,
       ttsCloneFidelity: draft.ttsCloneFidelity,
       ttsProfiles: { ...draft.ttsProfiles, [provider]: profile },
       systemVoice: draft.systemVoice,
@@ -206,6 +207,27 @@ export function TtsSettings({ state }: { state: Snapshot }) {
             hint="播放当前段时预先合成下一段，减少段间等待。停止前已提交的一段仍可能计费。"
             onChange={(value) => change("ttsPreloadNext", value)}
           />
+          {draft.ttsEngine === "api" && (
+            <Field
+              label="预缓冲文字条数"
+              hint="播放时提前合成后续文字回复的开头，减少消息间等待；原始语音仍按收到顺序播放。停止前已提交的合成仍可能计费。"
+            >
+              <select
+                aria-label="预缓冲文字条数"
+                value={draft.ttsReplyBufferSize}
+                onChange={(event) =>
+                  change("ttsReplyBufferSize", Number(event.target.value))
+                }
+              >
+                <option value={0}>关闭跨消息预缓冲</option>
+                {[1, 2, 3, 4, 5].map((size) => (
+                  <option key={size} value={size}>
+                    提前 {size} 条{size === 2 ? "（默认）" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           {draft.ttsEngine === "api" &&
             draft.ttsNativeOutput === false &&
             draft.ttsProvider === "volcengine" &&

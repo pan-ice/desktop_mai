@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api, showToast } from "../api";
-import { replySpeechText, speechSegments } from "../../shared/speech-text";
+import { speechSegments } from "../../shared/speech-text";
 import { ttsProfile } from "../../shared/tts";
 import type { Settings, Snapshot } from "../../shared/types";
 import { beginPlayback, interruptPlayback } from "../audio/playback";
+import {
+  ReplySpeechQueue,
+  type SynthesisResult,
+} from "../audio/reply-speech-queue";
 
 export function useRecorder(onText: (text: string) => Promise<void> | void) {
   const [recording, setRecording] = useState(false);
@@ -126,6 +130,7 @@ export async function speak(
   settings: Settings,
   dataUrl?: string,
   preserveQueue = false,
+  preparedFirst?: Promise<SynthesisResult>,
 ) {
   stopSpeech(!preserveQueue);
   const generation = playbackGeneration;
@@ -140,7 +145,7 @@ export async function speak(
       (url) => ({ url, error: undefined }),
       (error: unknown) => ({ url: null, error }),
     );
-  let prepared: ReturnType<typeof synthesize> | undefined;
+  let prepared: Promise<SynthesisResult> | undefined = preparedFirst;
   for (const [index, segment] of segments.entries()) {
     if (generation !== playbackGeneration) return;
     if (!dataUrl && !segment.trim()) continue;
@@ -237,88 +242,31 @@ export async function speak(
 }
 
 export function useSpeechReplies(state: Snapshot) {
-  const seen = useRef(new Set<string>());
-  const queue = useRef<{ text: string; dataUrl?: string }[]>([]);
-  const playing = useRef(false);
-  const current = useRef(state);
-  current.current = state;
+  const queue = useRef<ReplySpeechQueue | null>(null);
   const started = useRef(Date.now());
   useEffect(() => {
-    const liveReplies = new Map(
-      state.liveReplies.map((reply) => [reply.id, reply.receivedAt]),
-    );
-    for (const reply of state.history) {
-      if (
-        reply.role !== "assistant" ||
-        !liveReplies.has(reply.id) ||
-        seen.current.has(reply.id)
-      )
-        continue;
-      seen.current.add(reply.id);
-      if (
-        (state.settings.voiceEnabled || state.conversationActive) &&
-        !state.focusUntil &&
-        liveReplies.get(reply.id)! >= started.current &&
-        (reply.text || reply.attachments?.some((item) => item.type === "audio"))
-      ) {
-        const voices =
-          reply.attachments?.filter((item) => item.type === "audio") || [];
-        if (voices.length) {
-          queue.current.push(
-            ...voices.map((voice) => ({ text: "", dataUrl: voice.dataUrl })),
-          );
-        } else {
-          const text = replySpeechText(reply);
-          if (text.trim()) queue.current.push({ text });
-        }
-      }
-    }
-    if (seen.current.size > 2000) {
-      const retained = new Set(state.history.map((message) => message.id));
-      // 仅同步到的历史还没被消费，不能在清理去重记录时提前标记。
-      seen.current = new Set(
-        [...seen.current].filter((id) => retained.has(id)),
-      );
-    }
-    if (
-      playing.current ||
-      !queue.current.length ||
-      state.voiceInput === "recording" ||
-      state.voiceInput === "transcribing"
-    )
-      return;
-    playing.current = true;
-    void (async () => {
-      try {
-        while (queue.current.length) {
-          const snapshot = current.current;
-          if (
-            snapshot.voiceInput === "recording" ||
-            snapshot.voiceInput === "transcribing"
-          )
-            break;
-          if (
-            (!snapshot.settings.voiceEnabled && !snapshot.conversationActive) ||
-            snapshot.focusUntil
-          ) {
-            queue.current = [];
-            break;
-          }
-          const reply = queue.current.shift()!;
-          await speak(reply.text, snapshot.settings, reply.dataUrl, true);
-        }
-      } finally {
-        playing.current = false;
-      }
-    })();
-  }, [
-    state.history,
-    state.liveReplies,
-    state.settings,
-    state.focusUntil,
-    state.conversationActive,
-    state.voiceInput,
-  ]);
+    const value = new ReplySpeechQueue({
+      startedAt: started.current,
+      synthesize: (text) => api.synthesize(text),
+      play: (text, settings, dataUrl, preparedFirst) =>
+        speak(text, settings, dataUrl, true, preparedFirst),
+      stop: () => stopSpeech(false),
+      onError: (error) =>
+        showToast(error instanceof Error ? error.message : String(error), true),
+    });
+    queue.current = value;
+    const clear = () => value.clear();
+    window.addEventListener("mai:stop-speech", clear);
+    return () => {
+      window.removeEventListener("mai:stop-speech", clear);
+      value.dispose();
+      if (queue.current === value) queue.current = null;
+      stopSpeech();
+    };
+  }, []);
+  useEffect(() => {
+    queue.current?.accept(state);
+  }, [state]);
   useEffect(() => {
     if (
       (!state.settings.voiceEnabled && !state.conversationActive) ||
@@ -326,12 +274,4 @@ export function useSpeechReplies(state: Snapshot) {
     )
       stopSpeech();
   }, [state.settings.voiceEnabled, state.focusUntil, state.conversationActive]);
-  useEffect(() => () => stopSpeech(), []);
-  useEffect(() => {
-    const clear = () => {
-      queue.current = [];
-    };
-    window.addEventListener("mai:stop-speech", clear);
-    return () => window.removeEventListener("mai:stop-speech", clear);
-  }, []);
 }

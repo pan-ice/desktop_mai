@@ -36,7 +36,9 @@ void api
   })
   .catch(() => {});
 api.onStopPlayback((id) => {
-  if (local && local.id === id) local.cancel();
+  // A delayed stop for an earlier playback must not clear a newer reply queue.
+  if (id !== null && local && local.id !== id) return;
+  local?.cancel();
   window.dispatchEvent(new Event("mai:stop-speech"));
 });
 

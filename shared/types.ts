@@ -60,6 +60,7 @@ export interface Settings {
   ttsNativeOutput: boolean;
   ttsNaturalSpeech: boolean;
   ttsPreloadNext: boolean;
+  ttsReplyBufferSize: number;
   ttsCloneFidelity: boolean;
   ttsProfiles: Partial<Record<TtsProvider, TtsProfile>>;
   systemVoice: string;

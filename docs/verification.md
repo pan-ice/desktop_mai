@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-25 跨消息朗读预缓冲（桌宠 0.4.7）
+
+- 真实 Electron 旧构建复现：原始语音持续播放时，连续到达的「文字甲／原始语音乙／文字丙」没有触发任何后续 TTS 请求，必须逐条等到播放才合成。命令 `node scripts/tts-buffer-smoke.mjs --phase=before` 失败于提前合成断言，报告 `.cache/tts-buffer-smoke/before.json`，页面错误为 0。
+- 「声音设置」新增 API 朗读的「预缓冲文字条数」，默认 2，支持整数 0～5，0 关闭跨消息预缓冲。旧设置自动补默认值，保存和重启保留；同一条长回复的下一段仍由原「长回复连续播放」独立控制。
+- 新 `ReplySpeechQueue` 集中管理即时消息到达顺序、原始音频优先、有限后台首段预合成、去重及取消。首条消息立即播放，不等缓冲填满；后续合成提前完成也不能抢播，已准备首段直接复用。普通状态刷新不重复合成，音色变化使未来缓存失效，停止、专注、切换会话与卸载均隔离迟到结果。
+- 补充两处交错边界：单测及真实 Electron 均复现未完成的预合成提升为当前消息时仍占后台槽，会阻塞再下一条提前准备；现保留同一前台 Promise 并释放后台位置，单测已转绿。旧播放 ID 的延迟停止通知也不再清掉当前新队列，空 ID 的全局停止保持有效。promotion 红测在 `.cache/tts-buffer-smoke/promotion-before.json`。
+- 最终 281 项单元测试、类型检查、生产构建通过。21 项队列专项覆盖混合消息、两种历史／即时通知顺序、缓冲上限、0 关闭与已提交结果复用、声线切换、取消、失败后继续、长会话去重及挂载时序。原 `voice-replies-smoke --hidden` 的多段语音、引用过滤、手动朗读、长回复与中断恢复回归通过。
+- `npm run test:tts-buffer` 的真实构建入口与 `-- --mode=dev --phase=dev` 的真实 Vite HTTP 页面同 12 项全部通过，包括原始语音播放期间准备后续文字、预合成提升不占后台槽、混合 FIFO、旧停止 ID 不误停、长回复首段不重复合成、0／1／2 缓冲数量、停止／专注／录音／切音色、关闭后不继续发请求、系统语音不发 TTS、实际设置页保存及第二次启动保留。每轮 28 次本机测试 HTTP 请求，页面错误为 0；报告在 `.cache/tts-buffer-smoke/{after,dev}.json`。测试仅用隔离配置、本机假 TTS 与协议夹具，不访问用户语音服务或凭证。
+- 同 12 项在实际 0.4.7 解包 EXE 全部通过，核对两次真实启动、`app.isPackaged=true`、ASAR、双窗 `file:` 页面及经原 preload/IPC 返回的版本；28 次测试 HTTP 请求，页面错误为 0，隔离配置已清理。报告 `.cache/tts-buffer-smoke/packaged.json` 原样对应实际 `packaged-probe-2` 通过轮；首次启动探针失败单独保留，验收脚本现等待页面就绪后读取版本，未修改发行程序或检查器辅助文件。
+
+- 0.4.7 Portable 已离线生成，ASAR 与最终构建指纹、13 个构建／资源文件一致，依赖、版本图标、RunAsNode 与正式 CSP 检查通过。实际 Portable EXE 两次启动通过包内双窗／六页、污染环境变量、资源协议、自动端口认证握手、发送及重启持久化；页面均为 `file:` 且无开发端点授权，临时配置已清理。报告位于 `.cache/release-verification/result.json` 和 `.cache/portable-smoke/result.json`；`release/SHA256SUMS.txt` 仅列本轮桌宠 0.4.7、原独立适配器 0.1.1 与原网关 0.4.6 ZIP，配套 ZIP 哈希未变，旧包保留。
+
 ## 2026-10-25 桌宠气泡自动收起（桌宠 0.4.6）
 
 - 真实 Electron 桌宠复现：没有新消息时，初始问候经过 20 秒仍显示。红测为 `node scripts/pet-bubble-smoke.mjs --phase=before`，报告 `.cache/pet-bubble-smoke/before.json`；使用隔离配置、隐藏窗口与可控页面时钟。

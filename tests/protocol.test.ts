@@ -196,6 +196,20 @@ describe("桌宠协议 v1", () => {
   });
 });
 
+describe("跨消息朗读缓冲设置", () => {
+  it("只接受0至5条的整数缓冲大小", () => {
+    for (const size of [0, 1, 2, 3, 4, 5])
+      expect(
+        settingsPatchSchema.parse({ ttsReplyBufferSize: size })
+          .ttsReplyBufferSize,
+      ).toBe(size);
+    for (const size of [-1, 6, 1.5, NaN, Infinity, "2", null])
+      expect(
+        settingsPatchSchema.safeParse({ ttsReplyBufferSize: size }).success,
+      ).toBe(false);
+  });
+});
+
 describe("本机接入端口", () => {
   it("设置只允许自动分配或合法手动端口", () => {
     for (const port of [0, 1024, 18765, 65535])

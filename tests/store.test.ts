@@ -12,6 +12,36 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 describe("持久化版本迁移", () => {
+  it("旧版声音设置默认提前缓冲2条，保存的关闭与自选大小重启后保持", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "speech-reply-buffer-"));
+    directories.push(directory);
+    await writeFile(
+      join(directory, "state.json"),
+      JSON.stringify({
+        version: 2,
+        settings: { ttsEngine: "api", ttsPreloadNext: false },
+        history: [],
+        models: [],
+        encrypted: {},
+      }),
+    );
+    let store = new StateStore(directory);
+    await store.load();
+    expect(defaultSettings.ttsReplyBufferSize).toBe(2);
+    expect(store.state.settings.ttsReplyBufferSize).toBe(2);
+    expect(store.state.settings.ttsPreloadNext).toBe(false);
+    for (const size of [0, 5]) {
+      store.state.settings.ttsReplyBufferSize = size;
+      await store.save();
+      store = new StateStore(directory);
+      await store.load();
+      expect(store.state.settings.ttsReplyBufferSize).toBe(size);
+      expect(store.state.settings.ttsPreloadNext).toBe(false);
+    }
+  });
+
   it("新安装默认跟随内核名，自动名称不写入手动称呼或持久文件", async () => {
     const base = resolve(".cache/tests");
     await mkdir(base, { recursive: true });

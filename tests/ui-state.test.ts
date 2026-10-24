@@ -73,6 +73,7 @@ describe("设置草稿与外部更新", () => {
       ...saved,
       ttsEngine: "api" as const,
       ttsProvider: "mimo" as const,
+      ttsReplyBufferSize: 5,
       ttsProfiles: {
         ...saved.ttsProfiles,
         openai: {
@@ -91,6 +92,7 @@ describe("设置草稿与外部更新", () => {
     const merged = mergeSettingsDraft(draft, saved, incoming);
     expect(merged.ttsEngine).toBe("api");
     expect(merged.ttsProvider).toBe("mimo");
+    expect(merged.ttsReplyBufferSize).toBe(5);
     expect(merged.ttsProfiles).toEqual(draft.ttsProfiles);
     expect(merged.voiceEnabled).toBe(incoming.voiceEnabled);
   });
@@ -99,12 +101,14 @@ describe("设置草稿与外部更新", () => {
     const saved = emptySnapshot().settings;
     const submitted = {
       ...saved,
+      ttsReplyBufferSize: 1,
       ttsProfiles: {
         openai: { ...ttsProfile(saved, "openai"), voice: "first-voice" },
       },
     };
     const draft = {
       ...submitted,
+      ttsReplyBufferSize: 4,
       ttsProfiles: {
         ...submitted.ttsProfiles,
         openai: {
@@ -117,6 +121,7 @@ describe("设置草稿与外部更新", () => {
     };
     const merged = mergeSettingsDraft(draft, saved, submitted);
     expect(merged.ttsProfiles).toEqual(draft.ttsProfiles);
+    expect(merged.ttsReplyBufferSize).toBe(4);
     const savedAgain = structuredClone(draft);
     const committed = mergeSettingsDraft(merged, submitted, savedAgain);
     const external = {
