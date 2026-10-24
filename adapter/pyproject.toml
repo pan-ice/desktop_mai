@@ -1,6 +1,6 @@
 [project]
 name = "mai-desktop-message-adapter"
-version = "0.1.0"
+version = "0.1.1"
 description = "Mai 桌面伙伴的独立 MaiBot 消息协议适配器"
 requires-python = ">=3.11"
 dependencies = ["maim-message==0.6.8", "websockets==15.0.1", "certifi>=2025.1.31,<2027"]

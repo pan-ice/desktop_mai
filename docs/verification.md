@@ -1,5 +1,77 @@
 # 验证记录
 
+## 2026-10-25 桌宠气泡自动收起（桌宠 0.4.6）
+
+- 真实 Electron 桌宠复现：没有新消息时，初始问候经过 20 秒仍显示。红测为 `node scripts/pet-bubble-smoke.mjs --phase=before`，报告 `.cache/pet-bubble-smoke/before.json`；使用隔离配置、隐藏窗口与可控页面时钟。
+- 问候显示 5 秒，新的即时回复按显示长度保留 8～15 秒。倒计时只由新即时消息或主动点击角色重看触发；普通状态快照、连接状态、播放状态不续时，手动关闭后同句保持隐藏。到期仅收起气泡，语音继续；完整回复仍在聊天记录中。
+- 自动展示使用当前会话的 `liveReplies` 及本机接收时间，历史恢复、分页和窗口重载不作为新消息。历史与即时通知两种到达顺序都能处理，新展示取消旧计时，卸载清理定时器。两份名称验收脚本改为检查前显式点击角色重看。
+- 另复现长会话去重边界：累计消费超过 2,000 条后，只按当前历史清理已消费 ID，会忘记仍在即时元数据中、暂被历史上限截断的旧消息，分页回填时再次弹出。红测在 `.cache/pet-bubble-smoke/long-session-before.json`；现按当前历史与即时元数据 ID 并集保留已消费标记。
+- 最终 258 项单元测试、类型检查、生产构建及构建指纹检查通过。真实构建入口的 `npm run test:pet-bubble` 十项全部通过，覆盖 5 秒问候、8～15 秒回复、普通快照不续时、重复不重弹、新旧计时器交错、手动关闭与重看、两种到达顺序、语音独立、页面重载与长会话历史回填；报告 `.cache/pet-bubble-smoke/after.json`，页面错误为 0。
+- 同一套十项断言在实际 `release/win-unpacked/Mai 桌面伙伴.exe` 全部通过，确认版本 0.4.6、真实 `app.isPackaged`、ASAR 路径与包内 `file:` 页面；通过已发版 preload 推送隔离快照，不替换气泡代码。报告 `.cache/pet-bubble-smoke/packaged.json`，页面错误为 0，测试配置已清理。
+- 0.4.6 Portable 已离线生成，ASAR 与最终构建指纹、13 个构建／资源文件一致，依赖、版本图标、RunAsNode 与正式 CSP 检查通过。实际 Portable EXE 两次启动通过包内双窗／六页、污染环境变量、资源协议、自动端口认证握手、发送及重启持久化；页面均为 `file:` 且无开发端点授权，临时配置已清理。发行报告位于 `.cache/release-verification/result.json` 和 `.cache/portable-smoke/result.json`；`release/SHA256SUMS.txt` 仅列本轮桌宠 0.4.6、原独立适配器 0.1.1 与原网关 0.4.6 ZIP，配套 ZIP 哈希未变，旧包保留。
+
+## 2026-10-25 客户端启动端口自动分配（桌宠 0.4.5）
+
+- 按用户澄清，修改 `npm run dev` 与 `npm run dev:web` 的客户端网页服务端口。两处 Vite 配置使用 `0`，移除网页启动命令中的固定 `5173`；针对当前 Vite 将 `0` 回退到默认端口的行为，通过公开 HTTP 服务一次性执行原生 `listen(0)`，直接使用系统分配结果。显式指定非零端口仍有效。
+- Electron 窗口、开发 CSP 和热更新使用实际监听地址；同一服务重启复用当前端口，独立进程分别分配，不修改调用方共享配置。正式 HTML 移除固定开发 WebSocket 授权，正式桌宠继续加载包内 `file:` 页面，无客户端开发网页服务。
+- 真实 `npm run dev` 双实例同时通过，端口分别为 `56359`／`27160`，原生监听记录均为 `requested: 0`。两实例均验证控制面板／桌宠、preload/IPC、六页导航、实际 CSS 热更新且页面未重载、正常退出与端口释放；原有 `5173` 服务未停止。报告位于 `.cache/startup-smoke/result-cli-dev.json`。
+- 258 项单元测试、类型检查和生产构建通过。新增真实 Vite 回归覆盖共享配置双实例、连续两次重启、HTTP／HMR WebSocket、显式端口，以及开发／正式 CSP；构建指纹纳入新辅助文件与两处 Vite 配置。发行包核对进一步要求正式 CSP 不含开发 WebSocket 或 loopback HTTP 地址。
+- 0.4.5 Portable 已离线生成；`verify:release` 核对 ASAR 与最终构建指纹、13 个构建／资源文件、主进程依赖、图标版本和 RunAsNode 关闭。`test:portable` 实际启动最终 EXE 两次，确认双窗均为包内 `file:` 页面且 CSP 无开发 WebSocket／loopback HTTP 授权；污染环境变量、六页、资源协议、自动端口认证握手、发送及重启持久化通过，临时配置已清理。报告在 `.cache/release-verification/result.json` 与 `.cache/portable-smoke/result.json`；`release/SHA256SUMS.txt` 仅列本轮桌宠 0.4.5、独立适配器 0.1.1 和网关 0.4.6，旧发行包保留。
+
+## 2026-10-25 旧版网关自动名称（插件／中继 0.4.6）
+
+- 按实际接入方式补齐网关链路。基于本机 `E:\Code\desktop_adpter` 的干净 0.4.5 源码（`52a0ca7`）实现，保留 100 MiB 点歌、历史恢复及账号能力。清单增加 `config.get`，通过公开 `ctx.config.get('bot.nickname', None)` 读取昵称；只查询该字段，不读取 MaiBot 配置文件。
+- 支持本机及服务器模式。协商成功时在原握手中并行读取名字，及时完成的资料随 `ready` 提供，后续合法回复刷新；慢读取、权限拒绝或无效值不阻塞正常连接。未协商的旧路径不读取名字配置或增加字段。服务器分别协商后端与桌宠两段链路，混合新旧设备的实时回复和账号广播逐客户端过滤，v2 Attach 不变；名称不写入账号历史或去重摘要。
+- 隔离副本完整 94 项插件测试、4 项真实 Python／TypeScript 桥接与服务器联调通过。新名称专项 19 项在 SDK 2.10 和 2.13 均通过；Ruff、uv 离线锁检查通过。原 100 MiB 音频测试及网关→中继→客户端落盘、断线后历史分页恢复的大小与 SHA-256 验证通过。
+- `scripts/gateway-bot-name-smoke.mjs` 的 dev／build／实际 0.4.4 EXE × local／server 六轮全通过。使用真实插件工厂、SDK PluginContext 与本机测试 Host，首条聊天前即读取名称；覆盖改名、三视图、手动称呼、未提交草稿、断开重连、插件重载和实际入口重启。每轮两次启动、11 次只读 `bot.nickname` 的 SDK 调用审计，错误为 0；报告位于 `.cache/gateway-bot-name-smoke/`。未连接用户实际 MaiBot 或在线模型。
+- 已将 16 个经审查的公开源码／文档文件同步到本机插件仓库（13 修改、3 新增），同步前检查全部 50 个原始文件 SHA-256，原子发布并保留公开文件备份；配置、数据库、数据目录、凭证和原虚拟环境未修改。同步证据在 `.cache/gateway-name/sync-result.json`，不包含私密配置。
+- 发行包 `release/MaiBot-Desktop-Pet-Adapter-0.4.6.zip` 经白名单、51 个文件逐字节对比及解压后 19 项专项测试通过；从同步后的原仓库重新打包与测试发行包 SHA-256 完全一致。校验和已加入 `release/SHA256SUMS.txt`。桌宠继续使用 0.4.4；重载网关插件，并在「偏好设置」开启「跟随 MaiBot 名称」。独立部署的中继也需更新到 0.4.6 并重启。
+
+## 2026-10-25 自动使用 MaiBot 名称（桌宠 0.4.4／适配器 0.1.1）
+
+- 新增「偏好设置 → 跟随 MaiBot 名称」。独立适配器从已通过平台、账号、作用域及收件人检查的正常出站回复，读取机器人发送者的昵称；标准上游由 `global_config.bot.nickname` 构造该字段，来源见 [MaiBot send_service.py](https://github.com/Mai-with-u/MaiBot/blob/ac6ed61b7b9c971ad94921de3b16fa6f63c36a20/src/services/send_service.py#L572-L576)。经典握手不含名称，需等待本次连接的第一条有效回复。
+- 名称扩展通过 WebSocket Upgrade 的 `X-Mai-Desktop-Features: bot-name` 协商，仅协商成功的新适配器会向 `reply` 添加名字；旧 `welcome` 和未协商的回复结构不变。客户端接受可选 `ready`／`reply.botName`，无效名字忽略，其他字段保持严格校验。旧网关／服务器没有元数据时继续保留手动名。
+- `followBotName` 与原手动 `nickname` 分开保存，自动名称只存于当前活动连接，断开或换 peer／代次立即清空。新安装默认跟随；旧设置缺来源标记时保守保留手动模式。保存新手动名会关闭跟随，仅改用户称呼不会关闭；服务器桌宠账号名不再覆盖内核显示名。首页、聊天、桌宠、分享和默认试听句统一解析显示名称；未保存草稿和自写试听句保留。
+- 254 项客户端单元测试、33 项 Python 测试、本机 SDK 跨语言集成、类型检查、构建和 uv 离线锁文件检查通过。测试包括重复回复不能回退名字、未就绪或旧 peer／错误会话不能污染、无效名字不影响正常聊天、旧客户端不收新字段、真实多值 HTTP header 协商和断开清理。
+- `scripts/bot-name-smoke.mjs` 的 build、dev 真实入口通过：使用实际 `maim_message 0.6.8 MessageServer`、独立适配器和 Electron preload/IPC；先确认未获取名字，再由首条回复更新三视图、上游改名同步、跟随开关、仅改用户称呼、未提交草稿、手动覆盖、断开重连和真实重启后重新获取。报告和截图在 `.cache/bot-name-smoke/{build,dev}/`，错误数组为空。测试仅用本机服务与隔离配置，不连接用户 MaiBot 或在线模型。
+- 同一流程在实际 `release/win-unpacked/Mai 桌面伙伴.exe` 通过，确认真实 `app.isPackaged=true`、ASAR、0.4.4 版本与包内页面；同时注入过期开发 URL 和 `ELECTRON_RUN_AS_NODE=1`。报告在 `.cache/bot-name-smoke/packaged/result.json`，错误数组为空。三种模式均完成临时配置和服务清理。
+- 0.4.4 Portable 和独立适配器 0.1.1 ZIP 已生成，ASAR 与最终构建指纹／资源一致，实际便携入口、双窗、协议、自动端口和重启回归通过。最终校验和保存在 `release/SHA256SUMS.txt`。更新时保留现有配置，重启桌宠与适配器；旧安装需在设置中主动开启一次跟随。
+
+## 2026-10-25 恢复交互快捷键修复（0.4.3）
+
+- 用户澄清故障为按 `Ctrl + Shift + M` 无法恢复鼠标交互。设置页开关到实际原生穿透在构建入口和 0.4.2 正式 EXE 均可正常工作；定向诊断改为真实 Win32 键盘输入和角色鼠标命中。
+- 自建 Win32 helper 占用组合键后复现：应用注册返回失败但仍显示原快捷键，原生按键不能关闭穿透。证据为 `.cache/pet-shortcut-smoke/conflict/red-conflict.json`。现按顺序注册默认键、`Ctrl + Alt + Shift + M`、`Ctrl + Shift + F12`，只向设置说明、快捷键行、召回提示和托盘公布实际注册成功的键；全部失败明确提示从设置或托盘恢复，不抢占其他程序的键。
+- 对真实 `state.json.tmp` 写入施加延迟/失败，复现快捷键后内存设置已关闭但原生窗口仍在穿透，失败路径还有未处理 Promise 拒绝。紧急恢复现先关闭原生穿透、同步两页并显示桌宠，再尝试保存；保存失败报告原因并保持可交互。旧构建红测在 `normal-save-delay-legacy-red/`、`normal-save-failure-legacy-red/`。
+- 以实际 WSS 关闭回调门控连接配置保存，复现旧请求在快捷键恢复后把穿透重新写回。设置补丁现合并到当前状态；旧构建红测位于 `normal-inflight-settings-legacy-red/`。
+- 230 项单元测试、类型检查、生产构建及改动文件格式检查通过。
+- `scripts/pet-shortcut-smoke.mjs` 在真实 Windows 输入下通过构建入口六种场景：正常组合键、主键占用后使用实际备用键、全部候选占用后从设置恢复、真实写盘延迟、真实写盘失败、在途连接设置交错。均同时核对界面、快照、原生窗口和鼠标命中；报告保存在 `.cache/pet-shortcut-smoke/build/`。
+- 最新 0.4.3 `win-unpacked` EXE 的冲突、保存延迟、保存失败三场景通过，确认真实 ASAR、版本和可见提示；备用键实际为 `Ctrl + Alt + Shift + M`，快捷键行也显示四个对应按键，保存仍 pending 时已恢复原生点击。报告在 `.cache/pet-shortcut-smoke/packaged/`。第三候选 F12 的选择有单元覆盖，未单独做原生按键验收。
+- `node scripts/startup-smoke.mjs --phase=cli-dev` 通过最新真实 `npm run dev` 入口、双窗口、preload/IPC 和退出清理。0.4.3 离线打包、ASAR/构建指纹/资源/依赖/版本/图标/fuse 核对和真正 Portable 入口回归均通过，便携入口另外验证双窗、协议、自动端口、发送与重启保存；键盘验收使用同一包的实际解包 EXE。最终文件为 `release/Mai-Desktop-Pet-0.4.3-win-x64.exe`，校验和在 `release/SHA256SUMS.txt`。
+- 全部窗口、热键占用 helper、WSS 门控和文件写入注入均来自本机隔离测试，结束后清理。此次没有修改用户正在运行的旧实例；需要从托盘退出旧程序后重新启动，才能加载主进程修复。
+
+## 2026-10-25 启动修复与 0.4.2 发行验收
+
+- 开发模式实测复现 Vite 递归监听 `release/win-unpacked` 中的 Windows 占用文件，未处理的 `EBUSY` 使开发服务退出。两处实际 Vite 配置现排除 `release`、`out`、`dist` 和 `.cache`。红测 stderr 保存在 `.cache/runtime-smoke/dev/red-dev-ebusy.json`。
+- 复现仅有开发主进程/preload、没有正式页面时，旧启动器只检查 `out/main/index.js` 而打开空白窗口；页面加载 Promise 的错误也未进入启动失败处理。`npm start` 与双击启动共用源码/完整产物摘要检查，缺失或过期时自动构建；主进程等待两页加载，失败明确报错并退出。缺页面红测保存在 `.cache/startup-smoke/red-missing-renderer.json`。
+- 开发/构建/源码正式启动清理 Electron 遗留启动变量。正式发行包始终加载自身页面，并关闭 RunAsNode fuse；开发页面地址只接受本机 HTTP(S) 服务。
+- `npm run test:startup` 五阶段通过：缺页面报错退出、真实 `npm start`、同时注入五项遗留环境变量、删正式页面后自动重建、真实 `npm run dev` 在 5173 已占用时自动使用 5174。CLI 始终使用实际 `package.main`，由本机 inspector 在入口执行前仅处理测试窗口显示，不替换主进程。两页、preload/IPC、六页导航、退出码及测试端口释放均通过；没有停止原 5173 服务。报告为 `.cache/startup-smoke/result-all.json`。
+- 226 项客户端单元测试、类型检查与生产构建通过；独立消息适配器 24 项 Python 测试及 1 项本机跨语言协议联调通过，自动端口 Electron 回归通过。新启动单测覆盖页面来源、源文件/资源变化、产物被开发模式覆盖、缺失页面/分块、清单损坏和构建期间源码变化。
+- `npm run verify:release` 核对最终 0.4.2 解包程序：13 个实际构建/资源文件与最新 `out`、`resources` 逐字节一致，包含最后生产指纹；主进程 `ws` / `zod`、HTML 引用、EXE 图标与版本、RunAsNode fuse 和页面来源检查通过。报告在 `.cache/release-verification/result.json`。
+- `npm run test:portable` 实际运行最终自解压 EXE 两次，确认真实 `app.isPackaged`、临时解包位置与 ASAR 指纹；注入 `ELECTRON_RUN_AS_NODE=1` 和失效开发 URL 后仍加载包内双窗口。六页导航、`mai-asset` / `mai-media` 与 Range、本机认证握手、自动端口先绑定保存再导出、发送 IPC，以及重启后称呼/端口/消息恢复通过。报告在 `.cache/portable-smoke/result.json`；便携包为 `release/Mai-Desktop-Pet-0.4.2-win-x64.exe`，SHA-256 与配套适配器 ZIP 一同保存在 `release/SHA256SUMS.txt`。
+- 独立消息适配器的实际桌面入口通过配置导出、系统加密令牌、官方消息往返、保存回执、能力限制和退出持久化；报告在 `.cache/message-adapter-smoke/result.json`。
+- `npm run test:runtime -- --mode=dev --live2d`、`--mode=build --live2d`、`--mode=packaged --live2d` 的相同功能流程通过：六页导航、设置草稿/键盘缩放与双窗尺寸、本机自动端口导出和 WS 文字往返、截图确认发送、Chromium 虚拟摄像头、真实 MediaRecorder 到本机 ASR、真实 HTMLAudio 的本机 TTS 播放、PNG/GLB 导入与双窗 3D，以及配置、历史、模型和端口的重启恢复。开发流程全程独占 `release` 测试文件，未再出现 watcher 错误。
+- 三种入口均通过 Shizuku、Haru、Mao 衣橱导入、两套固定摘要 Core、真实 `mai-asset` 脚本/贴图，以及重启禁止 Core 请求后的三模型离线切换。每个模型在两窗口实际绘制并读回当前模型 ID 的 GPU 像素，首次导入和离线重启合计每种入口 12 个窗口样本。最终正式入口同时保留两个污染变量，仍为真实 `app.isPackaged=true`、最新 EXE、`resources/app.asar` 和包内页面。报告与整窗/帧缓冲 PNG 位于 `.cache/runtime-smoke/{dev,build,packaged}/`，错误数组为空。
+- 以上验收只使用隔离配置、本机服务、测试模型和虚拟音视频设备；未读取真实用户凭证、调用在线模型或连接远程机器。真实 QQ、服务商在线接口与实体设备仍需按部署配置联调。测试进程、服务和临时用户目录在结束时回收。
+
+## 2026-10-25 本机接入自动端口
+
+- 新配置的桌宠接入端口默认自动分配，直接 `listen(0, "127.0.0.1")` 保持真实绑定后再保存实际端口；后续启动复用已保存端口，也支持手动指定 1024–65535。已有明确端口的配置继续使用原值，端口占用时提示释放或明确重新分配并重新导出。
+- 两类配置导出在选择保存路径后保证接入已监听、实际端口已落盘；取消导出不新分配端口，重复导出复用监听与连接。协议导出函数拒绝尚未解析的 0，避免写出无效适配器地址。
+- 两处接入表单共享空白自动模式、重新分配入口和实际端口提示，未编辑字段同步分配结果，另一处未提交的手动草稿不会被覆盖。重新分配按钮只修改草稿，下次开启或导出时才应用。
+- 自动复核修复了配置在开启过程中变化时旧监听未释放的问题；复用监听还需匹配已绑定配置指纹。真实延迟连接回归覆盖端口变更和同端口身份变更，旧调用拒绝并释放监听，新设置保留且新身份可重新握手。注入正端口保存失败后，配置恢复为自动模式、监听关闭、不生成 TOML，解除失败后可以重试。
+- 199 项单元测试、类型检查与生产构建通过；新增 `npm run test:ports` 使用隐藏 Electron、真实 preload/IPC/WS 握手和独立数据目录，覆盖取消、两种配置导出、实际绑定与持久化、重复导出、断开/重启复用、重新分配、手动冲突和上述并发/失败场景。结果在 `.cache/port-smoke/result.json`，`passed=true`、`pageErrors=[]`。三项定向界面验收在 `.cache/port-ui-smoke/result.json`，全部通过。
+- 全部测试仅在本机回环网络运行。此功能用于桌宠本机接入；服务器模式填写服务方的实际地址和端口。
+
 ## 2026-10-24 界面与交互优化
 
 - 按请求先将已有运行库、兼容性及生命周期修复提交为 `0efe77e`，再修改 UI。采用纸白、深松绿和少量杏色强调，统一正文与辅助文字字号、焦点环、表单间距和主次按钮；六页在 1280×860 和 960×680 下分别留存截图。

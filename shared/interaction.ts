@@ -1,4 +1,5 @@
 import type { Snapshot } from "./types";
+import { displayBotName } from "./bot-name";
 
 export type VoiceInputPhase =
   "idle" | "listening" | "recording" | "transcribing";
@@ -13,7 +14,7 @@ export function interactionLabel(state: Snapshot): string | null {
   if (state.playback.phase === "playing") return "正在播放声音";
   if (state.replyStatus === "sending") return "正在发送…";
   if (state.replyStatus === "waiting")
-    return `已发送，等${state.settings.nickname}回应`;
+    return `已发送，等${displayBotName(state)}回应`;
   if (state.conversationActive && state.voiceInput === "listening")
     return "正在聆听";
   return null;

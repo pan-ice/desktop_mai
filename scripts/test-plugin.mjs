@@ -1,14 +1,9 @@
 import { spawn } from "node:child_process";
-import { resolve, join } from "node:path";
+import {
+  pluginDirectory as directory,
+  pluginPython as python,
+} from "./plugin-paths.mjs";
 
-const directory = resolve("MaiBot/plugins/desktop_pet_adapter");
-const python =
-  process.env.MAI_PYTHON ||
-  join(
-    directory,
-    ".venv",
-    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-  );
 const child = spawn(
   python,
   ["-m", "unittest", "discover", "-s", "tests", "-v"],

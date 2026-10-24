@@ -112,8 +112,7 @@ def _reference_text(kind: str, value: object) -> str:
     return f"[引用消息] {sender + '：' if sender else ''}{content or ''}\n"
 
 
-def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
-    """只接受配置的私聊收件人，绝不从机器人发送者猜测路由。"""
+def _reply_info(identity: Identity, message: dict) -> dict:
     if not isinstance(message, dict):
         raise ValueError("回复必须是消息对象")
     info = message.get("message_info")
@@ -139,6 +138,35 @@ def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
     message_id = info.get("message_id")
     if not isinstance(message_id, str) or not message_id:
         raise ValueError("回复缺少 message_id")
+    return info
+
+
+def reply_name(identity: Identity, message: dict) -> str | None:
+    """仅从目标路由已验证、发送者为当前机器人账号的回复提取昵称。"""
+    try:
+        info = _reply_info(identity, message)
+    except ValueError:
+        return None
+    sender = info.get("user_info")
+    if (not isinstance(sender, dict) or sender.get("user_id") != identity.account_id
+            or sender.get("platform", identity.platform) != identity.platform):
+        return None
+    value = sender.get("user_nickname")
+    if not isinstance(value, str) or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
+        return None
+    name = value.strip()
+    try:
+        # 与桌宠 JavaScript 字符串 / Zod 上限一致，不能把过长 emoji 名发送过去。
+        units = len(name.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        return None
+    return name if 1 <= units <= 40 else None
+
+
+def build_reply(identity: Identity, message: dict, channel_id: str) -> dict:
+    """只接受配置的私聊收件人，绝不从机器人发送者猜测路由。"""
+    info = _reply_info(identity, message)
+    message_id = info["message_id"]
     segments = []
     count = 0
 

@@ -28,6 +28,7 @@ import { CorePage } from "./pages/CorePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import type { Page, Snapshot } from "../shared/types";
 import { interactionLabel } from "../shared/interaction";
+import { displayBotName } from "../shared/bot-name";
 
 const navigation = [
   { id: "home", name: "此刻", icon: Home, note: "HOME" },
@@ -170,7 +171,9 @@ export function App() {
                 onClick={() => {
                   void perform(
                     () => api.showPet(),
-                    "桌宠已召回；Ctrl + Shift + M 也可以找到它",
+                    state.recoveryShortcut
+                      ? `桌宠已召回；${state.recoveryShortcut} 也可以找到它`
+                      : "桌宠已召回，鼠标交互已恢复",
                   );
                 }}
               >
@@ -360,7 +363,7 @@ function HomePage({
           <button
             type="button"
             className="stage-avatar"
-            aria-label={`和${state.settings.nickname}打个招呼`}
+            aria-label={`和${displayBotName(state)}打个招呼`}
             title="点击和小伙伴打个招呼"
             onClick={() => {
               void perform(() => api.setMood("happy"));
@@ -374,7 +377,7 @@ function HomePage({
           </button>
           <div className="stage-name">
             <h2>
-              {state.settings.nickname}
+              {displayBotName(state)}
               <span>
                 {interactionLabel(state) ||
                   (state.connection.phase === "connected"
@@ -487,7 +490,7 @@ function HomePage({
               </span>
               <div>
                 <strong>
-                  {state.settings.nickname}
+                  {displayBotName(state)}
                   <time>
                     {new Date(lastReply.timestamp).toLocaleTimeString("zh-CN", {
                       hour: "2-digit",
@@ -537,7 +540,7 @@ function HomePage({
             <span>A LITTLE NOTE</span>
           </div>
           <h3>
-            让{state.settings.nickname}，更像{state.settings.nickname}。
+            让{displayBotName(state)}，更像{displayBotName(state)}。
           </h3>
           <p>
             人格、记忆与思考都来自 MaiBot。

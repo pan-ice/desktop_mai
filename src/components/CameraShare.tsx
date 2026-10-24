@@ -3,6 +3,7 @@ import { Camera, LoaderCircle, Send, X } from "lucide-react";
 import { api, showToast } from "../api";
 import type { Snapshot } from "../../shared/types";
 import { useDialog } from "../hooks/useDialog";
+import { displayBotName } from "../../shared/bot-name";
 
 export function CameraShare({
   state,
@@ -212,7 +213,7 @@ export function CameraShare({
                 ) : (
                   <Send size={14} />
                 )}
-                {sending ? "正在发送…" : `发送给${state.settings.nickname}`}
+                {sending ? "正在发送…" : `发送给${displayBotName(state)}`}
               </button>
             </div>
           ) : (

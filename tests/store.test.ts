@@ -12,6 +12,107 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 describe("持久化版本迁移", () => {
+  it("新安装默认跟随内核名，自动名称不写入手动称呼或持久文件", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "bot-name-new-"));
+    directories.push(directory);
+    const store = new StateStore(directory);
+    await store.load();
+    expect(store.state.settings.followBotName).toBe(true);
+    store.state.settings.nickname = "我的备用名";
+    store.state.botName = "连接提供的名字";
+    await store.save();
+    const persisted = JSON.parse(
+      await readFile(join(directory, "state.json"), "utf8"),
+    );
+    expect(persisted.settings.nickname).toBe("我的备用名");
+    expect(persisted).not.toHaveProperty("botName");
+    expect(JSON.stringify(persisted)).not.toContain("连接提供的名字");
+    const restored = new StateStore(directory);
+    await restored.load();
+    expect(restored.state.settings.followBotName).toBe(true);
+    expect(restored.state.botName).toBeNull();
+  });
+
+  it.each(["麦麦", "用户自己起的名字"])(
+    "旧配置称呼 %s 保留手动模式",
+    async (nickname) => {
+      const base = resolve(".cache/tests");
+      await mkdir(base, { recursive: true });
+      const directory = await mkdtemp(join(base, "bot-name-legacy-"));
+      directories.push(directory);
+      await writeFile(
+        join(directory, "state.json"),
+        JSON.stringify({
+          version: 2,
+          settings: { nickname },
+          history: [],
+          models: [],
+          encrypted: {},
+        }),
+      );
+      const store = new StateStore(directory);
+      await store.load();
+      expect(store.state.settings.nickname).toBe(nickname);
+      expect(store.state.settings.followBotName).toBe(false);
+      store.state.settings.followBotName = true;
+      await store.save();
+      const restored = new StateStore(directory);
+      await restored.load();
+      expect(restored.state.settings.nickname).toBe(nickname);
+      expect(restored.state.settings.followBotName).toBe(true);
+    },
+  );
+
+  it("首次自动分配前可保存端口 0，已选实际端口在重启后保持", async () => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "adapter-auto-port-"));
+    directories.push(directory);
+    const store = new StateStore(directory);
+    await store.load();
+    expect(store.state.settings.adapterPort).toBe(0);
+    store.state.settings.nickname = "自动端口测试";
+    await store.save();
+    const unassigned = new StateStore(directory);
+    await unassigned.load();
+    expect(unassigned.state.settings.adapterPort).toBe(0);
+    expect(unassigned.state.settings.nickname).toBe("自动端口测试");
+    unassigned.state.settings.adapterPort = 49152;
+    await unassigned.save();
+    const assigned = new StateStore(directory);
+    await assigned.load();
+    expect(assigned.state.settings.adapterPort).toBe(49152);
+    expect(assigned.state.settings.nickname).toBe("自动端口测试");
+    expect(defaultSettings.adapterPort).toBe(0);
+  });
+
+  it.each([18765, 49153])("旧安装保存的端口 %i 不自动重置", async (port) => {
+    const base = resolve(".cache/tests");
+    await mkdir(base, { recursive: true });
+    const directory = await mkdtemp(join(base, "adapter-saved-port-"));
+    directories.push(directory);
+    await writeFile(
+      join(directory, "state.json"),
+      JSON.stringify({
+        version: 2,
+        settings: { adapterPort: port, nickname: "旧安装" },
+        history: [],
+        models: [],
+        encrypted: {},
+      }),
+    );
+    const store = new StateStore(directory);
+    await store.load();
+    expect(store.state.settings.adapterPort).toBe(port);
+    await store.save();
+    const restored = new StateStore(directory);
+    await restored.load();
+    expect(restored.state.settings.adapterPort).toBe(port);
+    expect(restored.state.settings.nickname).toBe("旧安装");
+  });
+
   it("旧版语音配置继续使用原服务、模型与音色", async () => {
     const base = resolve(".cache/tests");
     await mkdir(base, { recursive: true });
@@ -207,7 +308,7 @@ describe("持久化版本迁移", () => {
     expect(store.state.settings).toMatchObject({
       userId: "existing-owner",
       platform: "existing_pet",
-      adapterPort: 18765,
+      adapterPort: 0,
       adapterScope: "",
       autoConnect: false,
     });

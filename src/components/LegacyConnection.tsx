@@ -1,21 +1,42 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Download, LoaderCircle } from "lucide-react";
-import { api, perform } from "../api";
+import { api, perform, showToast } from "../api";
 import { Field } from "./ui";
+import { AdapterPortField, useAdapterPort } from "./AdapterPortField";
 import type { Snapshot } from "../../shared/types";
 
 /** 只为已有安装保留接入兼容；日常使用由 QQ 登录完成。 */
 export function LegacyConnection({ state }: { state: Snapshot }) {
   const [token, setToken] = useState("");
-  const [port, setPort] = useState(state.settings.adapterPort);
-  const [busy, setBusy] = useState(false);
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
+  const port = useAdapterPort(state.settings.adapterPort);
+  const [operation, setOperation] = useState("");
+  const pending = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+  const busy = Boolean(operation);
+  const run = async (name: string, action: () => Promise<unknown>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setOperation(name);
     try {
       await perform(action);
     } finally {
-      setBusy(false);
+      pending.current = false;
+      setOperation("");
     }
+  };
+  const saveConnection = (exportConfig: boolean) => {
+    if (!form.current?.reportValidity()) return;
+    return run(exportConfig ? "export" : "connect", async () => {
+      if (token) {
+        await api.setCredential("adapterToken", token);
+        setToken("");
+      }
+      await port.save();
+      if (exportConfig) {
+        if (await api.exportAdapterConfig())
+          showToast("插件配置已导出，接入已开启；请替换配置并重载插件");
+      } else await api.connect();
+    });
   };
   return (
     <details className="connection-more legacy-connection">
@@ -27,42 +48,35 @@ export function LegacyConnection({ state }: { state: Snapshot }) {
           className="button secondary"
           disabled={busy}
           onClick={() =>
-            void run(async () => {
+            void run("import", async () => {
               if (await api.importServerConnection()) await api.connect();
             })
           }
         >
-          <Download size={15} /> 导入服务器凭证
+          {operation === "import" ? (
+            <LoaderCircle size={15} className="spin" />
+          ) : (
+            <Download size={15} />
+          )}
+          {operation === "import" ? "正在导入…" : "导入服务器凭证"}
         </button>
         <details className="connection-more legacy-local">
           <summary>本机适配器接入</summary>
           <form
+            ref={form}
+            aria-busy={busy}
             className="connection-more-content"
             onSubmit={(event) => {
               event.preventDefault();
-              void run(async () => {
-                if (token) {
-                  await api.setCredential("adapterToken", token);
-                  setToken("");
-                }
-                await api.updateSettings({
-                  connectionMode: "local",
-                  adapterPort: port,
-                });
-                await api.connect();
-              });
+              void saveConnection(false);
             }}
           >
-            <Field label="本机接入端口">
-              <input
-                type="number"
-                required
-                min={1024}
-                max={65535}
-                value={port}
-                onChange={(event) => setPort(Number(event.target.value))}
-              />
-            </Field>
+            <AdapterPortField
+              label="本机接入端口"
+              savedPort={state.settings.adapterPort}
+              draft={port}
+              disabled={busy}
+            />
             <Field
               label="独立连接令牌"
               hint="留空会沿用原令牌，首次使用自动生成。"
@@ -70,6 +84,7 @@ export function LegacyConnection({ state }: { state: Snapshot }) {
               <input
                 type="password"
                 autoComplete="off"
+                disabled={busy}
                 value={token}
                 placeholder={
                   state.credentials.adapterToken ? "已保存" : "自动生成"
@@ -82,25 +97,22 @@ export function LegacyConnection({ state }: { state: Snapshot }) {
                 type="button"
                 className="button secondary"
                 disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    if (token) {
-                      await api.setCredential("adapterToken", token);
-                      setToken("");
-                    }
-                    await api.updateSettings({
-                      connectionMode: "local",
-                      adapterPort: port,
-                    });
-                    await api.exportAdapterConfig();
-                  })
-                }
+                onClick={() => void saveConnection(true)}
               >
-                <Download size={15} /> 导出插件配置
+                {operation === "export" ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <Download size={15} />
+                )}
+                {operation === "export"
+                  ? "正在导出…"
+                  : "导出插件配置并开启接入"}
               </button>
               <button type="submit" className="button primary" disabled={busy}>
-                {busy && <LoaderCircle size={15} className="spin" />}
-                保存并开启接入
+                {operation === "connect" && (
+                  <LoaderCircle size={15} className="spin" />
+                )}
+                {operation === "connect" ? "正在开启…" : "保存并开启接入"}
               </button>
             </div>
           </form>

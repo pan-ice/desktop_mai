@@ -3,12 +3,13 @@ import { idlePlayback } from "./playback";
 
 export const defaultSettings: Settings = {
   nickname: "麦麦",
+  followBotName: true,
   userName: "你",
   userId: "desktop_owner",
   connectionMode: "local",
   serverUrl: "",
   serverAccountId: "",
-  adapterPort: 18765,
+  adapterPort: 0,
   adapterScope: "",
   platform: "desktop_pet",
   botId: "mai_desktop_pet",
@@ -97,6 +98,8 @@ export function emptySnapshot(desktop = false): Snapshot {
     voiceInput: "idle",
     replyStatus: "idle",
     playback: { ...idlePlayback },
+    recoveryShortcut: null,
+    botName: null,
     desktop,
     version: "0.4.0",
   };

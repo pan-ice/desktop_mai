@@ -12,6 +12,14 @@ export const PROTOCOL = "mai-desktop";
 export const MAX_FRAME = 16 * 1024 * 1024;
 export const REQUIRED_CAPABILITIES = ["chat", "image", "audio", "proactive"];
 const id = z.string().min(1).max(100);
+const botName = z
+  .string()
+  .regex(/^[^\u0000-\u001f\u007f-\u009f]+$/)
+  .trim()
+  .min(1)
+  .max(40)
+  .optional()
+  .catch(undefined);
 const identitySchema = z
   .object({
     platform: id,
@@ -53,6 +61,7 @@ export const pluginFrameSchema = z.discriminatedUnion("type", [
       sessionId: id,
       capabilities: z.array(z.string().max(80)).max(32),
       transport: z.enum(["gateway", "legacy"]).optional(),
+      botName,
     })
     .strict(),
   z
@@ -74,6 +83,7 @@ export const pluginFrameSchema = z.discriminatedUnion("type", [
       id,
       sessionId: id,
       segments: z.array(segmentSchema).min(1).max(100),
+      botName,
     })
     .strict(),
 ]);
@@ -131,7 +141,17 @@ export function parseReply(frame: PluginReply): Reply {
   return { id: frame.id, text: text.join(""), attachments, parts };
 }
 
+function requireAdapterPort(settings: Settings) {
+  if (
+    !Number.isInteger(settings.adapterPort) ||
+    settings.adapterPort < 1024 ||
+    settings.adapterPort > 65535
+  )
+    throw new Error("请先开启本机接入，分配并保存实际端口后再导出配置");
+}
+
 export function adapterConfig(settings: Settings, token: string): string {
+  requireAdapterPort(settings);
   const quote = (value: string) => JSON.stringify(value);
   return `# Mai 桌面伙伴适配器 · 此文件包含独立连接令牌，请妥善保存。\n[plugin]\nenabled = true\nconfig_version = "1.0.0"\n\n[connection]\ndesktop_url = "ws://127.0.0.1:${settings.adapterPort}/maibot"\ntoken = ${quote(token)}\n\n[identity]\nplatform = ${quote(settings.platform)}\naccount_id = ${quote(settings.botId)}\nuser_id = ${quote(settings.userId)}\nscope = ${quote(settings.adapterScope)}\n`;
 }
@@ -140,6 +160,7 @@ export function messageAdapterConfig(
   settings: Settings,
   token: string,
 ): string {
+  requireAdapterPort(settings);
   const quote = (value: string) => JSON.stringify(value);
   return `# Mai 桌面伙伴独立适配器；包含桌宠连接令牌，请妥善保存。\n# MaiBot 令牌填写 [maim_message].auth_token 中的原文值，或设置 MAIBOT_TOKEN。\n[maibot]\nurl = "ws://127.0.0.1:8000/ws"\ntoken = ""\n\n[desktop]\nurl = "ws://127.0.0.1:${settings.adapterPort}/maibot"\ntoken = ${quote(token)}\n\n[identity]\nplatform = ${quote(settings.platform)}\naccount_id = ${quote(settings.botId)}\nuser_id = ${quote(settings.userId)}\nuser_name = ${quote(settings.userName)}\nscope = ${quote(settings.adapterScope)}\n`;
 }

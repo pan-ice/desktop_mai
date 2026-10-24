@@ -53,6 +53,16 @@ it("没有内核生成事件时只显示发送/等待，不把沉默当故障或
   expect(interactionLabel(state)).toBeNull();
 });
 
+it("等待提示跟随当前内核名字，手动模式保留本机称呼", () => {
+  const state = emptySnapshot();
+  state.replyStatus = "waiting";
+  state.botName = "墨墨";
+  state.settings.nickname = "本机称呼";
+  expect(interactionLabel(state)).toBe("已发送，等墨墨回应");
+  state.settings.followBotName = false;
+  expect(interactionLabel(state)).toBe("已发送，等本机称呼回应");
+});
+
 it("转写、录音和实际播放优先于等待回复的状态", () => {
   const state = emptySnapshot();
   state.replyStatus = "waiting";

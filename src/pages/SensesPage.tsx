@@ -21,6 +21,7 @@ import { ModelGuidance } from "../components/ModelGuidance";
 import { modelGuideLinks } from "../../shared/model-guidance";
 import { mergeSettingsDraft } from "../../shared/settings-draft";
 import type { Settings, Snapshot } from "../../shared/types";
+import { displayBotName } from "../../shared/bot-name";
 
 export function useSettingsDraft(settings: Settings) {
   const saved = JSON.stringify(settings);
@@ -321,7 +322,7 @@ export function SensesPage({ state }: { state: Snapshot }) {
                   }}
                 >
                   <Send size={14} />
-                  分享给{state.settings.nickname}
+                  分享给{displayBotName(state)}
                 </button>
                 {state.connection.phase !== "connected" && (
                   <small>连接 MaiBot 后即可分享。</small>

@@ -24,6 +24,7 @@ import { messageContent } from "../../shared/message-content";
 import { replySpeechText } from "../../shared/speech-text";
 import { MessageAudio } from "../components/ChatAudio";
 import { interactionLabel } from "../../shared/interaction";
+import { displayBotName } from "../../shared/bot-name";
 import {
   chatMessageKey,
   historyViewChange,
@@ -239,7 +240,7 @@ export function ChatPage({
       <div className="page-heading">
         <div>
           <div className="eyebrow">A CONVERSATION BETWEEN US</div>
-          <h1>和{state.settings.nickname}聊聊</h1>
+          <h1>和{displayBotName(state)}聊聊</h1>
           <p>不用想好开场白，想到什么就说什么。</p>
         </div>
         <div className="heading-actions">
@@ -282,7 +283,7 @@ export function ChatPage({
               <PawPrint size={22} />
             </span>
             <span>
-              <strong>{state.settings.nickname}</strong>
+              <strong>{displayBotName(state)}</strong>
               <small>{interactionLabel(state) || "每一句，都认真听。"}</small>
             </span>
           </div>
@@ -416,7 +417,7 @@ export function ChatPage({
                 <div className="message-content">
                   <div className="message-meta">
                     {message.role === "assistant"
-                      ? state.settings.nickname
+                      ? displayBotName(state)
                       : state.settings.userName}
                     <time
                       title={new Date(message.timestamp).toLocaleString(
@@ -449,7 +450,7 @@ export function ChatPage({
                           key={index}
                           id={`${message.role}:${message.id}:${index}`}
                           url={part.dataUrl}
-                          title={`${message.role === "assistant" ? state.settings.nickname : state.settings.userName}的音频`}
+                          title={`${message.role === "assistant" ? displayBotName(state) : state.settings.userName}的音频`}
                         />
                       ),
                     )}
@@ -530,7 +531,7 @@ export function ChatPage({
             aria-describedby={`composer-hint${sendError ? " composer-error" : ""}`}
             placeholder={
               connected
-                ? `和${state.settings.nickname}说点什么…`
+                ? `和${displayBotName(state)}说点什么…`
                 : "可以先写下想说的话，连接后再发送…"
             }
             value={text}

@@ -4,7 +4,7 @@
 
 ```text
 Mai 桌宠 ⇄ 桌宠协议 v1 ⇄ 本适配器 ⇄ 官方 Legacy WebSocket ⇄ MaiBot
-         18765/maibot                         8000/ws
+         自动分配端口/maibot                    8000/ws
 ```
 
 ## 要求
@@ -84,6 +84,7 @@ deny_ids = []
 
 ## 支持范围与投递语义
 
+- **自动名称（0.1.1）**：配合桌宠 0.4.4，在「偏好设置」开启「跟随 MaiBot 名称」，首次有效回复后自动使用内核 `bot.nickname`。名称来自已验证目标平台／账号／作用域／收件人及机器人发送者的正常回复，不读取配置文件或 WebUI。经典握手不提供名称，重连后需等待新回复。新旧桌宠通过 WebSocket Upgrade 响应头协商扩展，旧版桌宠继续接收原有帧。
 - 入站支持文本、截图/图片及图文混合；平台名固定为小写，所有身份为非空字符串，时间为 float 秒。`additional_config` 正确填写 `platform_io_account_id`、非空时的 `platform_io_scope` 和私聊 `platform_io_target_user_id`。
 - 出站递归解析 `seglist`，支持文字、PNG/JPEG/WebP/GIF 图片及表情、MP3/WAV/OGG 语音，并将 `at` 和 `reply` 转为可读文字。桌宠保留文字与媒体的原始顺序。按真实收件人校验私聊；群聊和不匹配的账号/作用域被拒绝。文件、转发及未知分段拒绝整条回复，不发送部分内容或成功保存回执，后续合法消息仍可接收。两条链路的结构差异见 [消息对接说明](../docs/message-types.md)。
 - 媒体为内嵌 base64，不读取内核文件或任意远程 URL。单媒体最多 9 MB，单桌宠帧最多 16 MB，最多 100 段；长文本按桌宠的 UTF-16 字符限制拆段。
@@ -106,18 +107,18 @@ npm run dist:adapter
 
 测试运行 Python 协议单元测试，再启动官方 0.6.8 `MessageServer`、新适配器和实际 Electron 主进程桥接类，验证原文认证、图文往返、错误收件人拒绝、保存后 ID 回执，以及两端断线重连。全部使用本机回环服务，不使用模型 Key，不调用 LLM。
 
-测试默认查找 `adapter/.venv`，可用 `MAI_MESSAGE_ADAPTER_PYTHON` 指定解释器。ZIP 输出 `release/MaiBot-Desktop-Message-Adapter-0.1.0.zip`，只包含源代码、锁文件、配置示例与文档，不含实际配置或令牌。解压后在独立目录启动，不要放进 `MaiBot/plugins` 当插件加载。
+测试默认查找 `adapter/.venv`，可用 `MAI_MESSAGE_ADAPTER_PYTHON` 指定解释器。ZIP 输出 `release/MaiBot-Desktop-Message-Adapter-0.1.1.zip`，只包含源代码、锁文件、配置示例与文档，不含实际配置或令牌。解压后在独立目录启动，不要放进 `MaiBot/plugins` 当插件加载。
 
 ## 排错
 
-| 现象 | 检查 |
-| --- | --- |
-| 连接被拒绝 | MaiBot 已运行；地址、监听和容器端口映射一致 |
-| 立即断开、1008 | `[maibot].token` 与 `auth_token` 原文一致，无 Bearer 前缀 |
-| 反复被顶下线 | 同一个 `platform` 是否运行了第二个经典适配器 |
-| 桌宠连接被拒绝 | 桌宠已开启接入；桌宠地址、独立令牌及身份与导出配置一致 |
-| 有入站无回复 | `bot.platforms` 已注册桌宠账号；访问策略放行；未被旧网关绑定抢占 |
-| 收件人校验失败 | 出站 `platform_io_target_user_id` 是否与配置的私聊用户一致 |
-| 未收到消息 ID 回执 | 桌宠是否已成功保存媒体和历史；是否断线或超出媒体限制 |
+| 现象               | 检查                                                             |
+| ------------------ | ---------------------------------------------------------------- |
+| 连接被拒绝         | MaiBot 已运行；地址、监听和容器端口映射一致                      |
+| 立即断开、1008     | `[maibot].token` 与 `auth_token` 原文一致，无 Bearer 前缀        |
+| 反复被顶下线       | 同一个 `platform` 是否运行了第二个经典适配器                     |
+| 桌宠连接被拒绝     | 桌宠已开启接入；桌宠地址、独立令牌及身份与导出配置一致           |
+| 有入站无回复       | `bot.platforms` 已注册桌宠账号；访问策略放行；未被旧网关绑定抢占 |
+| 收件人校验失败     | 出站 `platform_io_target_user_id` 是否与配置的私聊用户一致       |
+| 未收到消息 ID 回执 | 桌宠是否已成功保存媒体和历史；是否断线或超出媒体限制             |
 
 进一步排查按[官方五段链路](https://docs.mai-mai.org/develop/adapters/debugging)检查日志、策略和出站路由。

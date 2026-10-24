@@ -60,6 +60,7 @@ const serviceUrl = (protocols: string[]) =>
 export const settingsPatchSchema = z
   .object({
     nickname: z.string().trim().min(1).max(40),
+    followBotName: z.boolean(),
     userName: z.string().trim().min(1).max(40),
     userId: z.string().trim().min(1).max(100),
     connectionMode: z.enum(["local", "server"]),
@@ -68,7 +69,7 @@ export const settingsPatchSchema = z
       z.literal(""),
       z.string().regex(/^pet_[a-f0-9]{32}$/),
     ]),
-    adapterPort: z.number().int().min(1024).max(65535),
+    adapterPort: z.union([z.literal(0), z.number().int().min(1024).max(65535)]),
     adapterScope: z.string().trim().max(100),
     platform: z.string().regex(/^[a-z][a-z0-9_\-]{1,63}$/),
     botId: z.string().trim().min(1).max(100),

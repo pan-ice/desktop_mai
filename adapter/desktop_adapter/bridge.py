@@ -13,9 +13,17 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from . import __version__
 from .config import Config
-from .protocol import CAPABILITIES, MAX_FRAME, build_inbound, build_reply
+from .protocol import CAPABILITIES, MAX_FRAME, build_inbound, build_reply, reply_name
 
 logger = logging.getLogger(__name__)
+
+
+def _supports_bot_name(socket) -> bool:
+    try:
+        values = socket.response.headers.get_all("X-Mai-Desktop-Features")
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return any(token.strip() == "bot-name" for value in values for token in value.split(","))
 
 
 class DesktopBridge:
@@ -30,6 +38,8 @@ class DesktopBridge:
         self.started_at = time.time_ns() // 1_000_000
         self.instance_id = str(uuid4())
         self.user_name = config.identity.user_name
+        self.bot_name: str | None = None
+        self.bot_name_supported = False
         self.pending_replies: dict[str, asyncio.Future] = {}
         self.requests: OrderedDict[str, tuple[str, dict]] = OrderedDict()
         self.delivered: OrderedDict[str, None] = OrderedDict()
@@ -39,6 +49,9 @@ class DesktopBridge:
     async def run(self) -> None:
         attempts = 0
         while True:
+            # 没有稳定的上游身份/连接代次，重连时必须等本次有效回复重新取得名字。
+            self.bot_name = None
+            self.bot_name_supported = False
             while not self.client.is_connected():
                 await asyncio.sleep(0.1)
             try:
@@ -50,6 +63,7 @@ class DesktopBridge:
                     proxy=None,
                 ) as socket:
                     self.socket = socket
+                    self.bot_name_supported = _supports_bot_name(socket)
                     await self._send({"v": 1, "type": "hello", "protocol": "mai-desktop",
                                       "pluginVersion": __version__, "instanceId": self.instance_id,
                                       "startedAt": self.started_at,
@@ -103,6 +117,8 @@ class DesktopBridge:
             finally:
                 self.ready = False
                 self.socket = None
+                self.bot_name = None
+                self.bot_name_supported = False
                 for future in self.pending_replies.values():
                     if not future.done():
                         future.set_result(False)
@@ -112,6 +128,8 @@ class DesktopBridge:
     async def _watch_core(self, socket) -> None:
         while self.client.is_connected():
             await asyncio.sleep(0.1)
+        self.bot_name = None
+        self.bot_name_supported = False
         logger.warning("MaiBot 已断开，暂停桌宠接入；未确认请求不自动重放")
         await socket.close(1013, "MaiBot disconnected")
 
@@ -186,6 +204,11 @@ class DesktopBridge:
                     if not self.ready or not self.socket:
                         logger.warning("桌宠离线，未投递回复；经典协议没有离线队列")
                         return
+                    name = reply_name(self.config.identity, message)
+                    if name:
+                        self.bot_name = name
+                        if self.bot_name_supported:
+                            reply["botName"] = name
                     future = asyncio.get_running_loop().create_future()
                     self.pending_replies[reply["id"]] = future
                     try:

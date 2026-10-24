@@ -1,30 +1,44 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Download, LoaderCircle, Plug, Square } from "lucide-react";
-import { api, perform } from "../api";
-import { Field, Panel } from "./ui";
+import { api, perform, showToast } from "../api";
+import { Panel } from "./ui";
+import { AdapterPortField, useAdapterPort } from "./AdapterPortField";
 import type { Snapshot } from "../../shared/types";
 
 export function MessageAdapterConnection({ state }: { state: Snapshot }) {
-  const [port, setPort] = useState(state.settings.adapterPort);
-  const [busy, setBusy] = useState(false);
+  const port = useAdapterPort(state.settings.adapterPort);
+  const [operation, setOperation] = useState("");
+  const pending = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+  const busy = Boolean(operation);
   const localActive =
     state.settings.connectionMode === "local" &&
     ["connected", "connecting", "reconnecting"].includes(
       state.connection.phase,
     );
-  const run = async (exportConfig: boolean) => {
-    setBusy(true);
+  const run = async (action: "connect" | "export" | "disconnect") => {
+    if (
+      pending.current ||
+      (action !== "disconnect" && !form.current?.reportValidity())
+    )
+      return;
+    pending.current = true;
+    setOperation(action);
     try {
       await perform(async () => {
-        await api.updateSettings({
-          connectionMode: "local",
-          adapterPort: port,
-        });
-        if (exportConfig && !(await api.exportMessageAdapterConfig())) return;
-        await api.connect();
+        if (action === "disconnect") {
+          await api.disconnect();
+          return;
+        }
+        await port.save();
+        if (action === "export") {
+          if (await api.exportMessageAdapterConfig())
+            showToast("配置已导出，接入已开启；请使用新配置启动适配器");
+        } else await api.connect();
       });
     } finally {
-      setBusy(false);
+      pending.current = false;
+      setOperation("");
     }
   };
   return (
@@ -37,50 +51,55 @@ export function MessageAdapterConnection({ state }: { state: Snapshot }) {
       }
     >
       <form
+        ref={form}
+        aria-busy={busy}
         onSubmit={(event) => {
           event.preventDefault();
-          void run(false);
+          void run("connect");
         }}
       >
-        <Field
+        <AdapterPortField
           label="桌宠接入端口"
-          hint="与适配器配置保持一致；首次使用先导出配置。"
-        >
-          <input
-            type="number"
-            required
-            min={1024}
-            max={65535}
-            value={port}
-            onChange={(event) => setPort(Number(event.target.value))}
-          />
-        </Field>
+          savedPort={state.settings.adapterPort}
+          draft={port}
+          disabled={busy}
+        />
         <div className="form-actions">
           {localActive && (
             <button
               type="button"
               className="button secondary"
               disabled={busy}
-              onClick={() => void perform(() => api.disconnect())}
+              onClick={() => void run("disconnect")}
             >
-              <Square size={14} /> 断开
+              {operation === "disconnect" ? (
+                <LoaderCircle size={14} className="spin" />
+              ) : (
+                <Square size={14} />
+              )}
+              {operation === "disconnect" ? "正在断开…" : "断开"}
             </button>
           )}
           <button
             type="button"
             className="button secondary"
             disabled={busy}
-            onClick={() => void run(true)}
+            onClick={() => void run("export")}
           >
-            <Download size={15} /> 导出配置并开启接入
+            {operation === "export" ? (
+              <LoaderCircle size={15} className="spin" />
+            ) : (
+              <Download size={15} />
+            )}
+            {operation === "export" ? "正在导出…" : "导出配置并开启接入"}
           </button>
           <button type="submit" className="button primary" disabled={busy}>
-            {busy ? (
+            {operation === "connect" ? (
               <LoaderCircle size={15} className="spin" />
             ) : (
               <Plug size={15} />
             )}
-            开启接入
+            {operation === "connect" ? "正在开启…" : "开启接入"}
           </button>
         </div>
         <p className="helper-text">

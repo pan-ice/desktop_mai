@@ -31,6 +31,7 @@ interface Peer {
   alive: boolean;
   capabilities: string[];
   transport: "gateway" | "legacy";
+  botName: string | null;
 }
 interface Pending {
   resolve(): void;
@@ -59,6 +60,19 @@ export class MaiBotBridge extends EventEmitter {
   private remoteFatalGeneration = -1;
   private remoteAttempts = 0;
   phase: ConnectionPhase = "disconnected";
+
+  get botName(): string | null {
+    return this.phase === "connected" &&
+      this.active?.generation === this.generation
+      ? this.active.botName
+      : null;
+  }
+
+  get localPort(): number | undefined {
+    if (!this.server?.listening) return;
+    const address = this.server.address();
+    return address && typeof address !== "string" ? address.port : undefined;
+  }
 
   constructor(
     private readonly certificateAuthority: CertificateAuthorityProvider = () =>
@@ -117,6 +131,9 @@ export class MaiBotBridge extends EventEmitter {
           maxPayload: MAX_REPLY_FRAME,
           perMessageDeflate: false,
         });
+        wss.on("headers", (headers) => {
+          headers.push("X-Mai-Desktop-Features: bot-name");
+        });
         this.server = server;
         this.wss = wss;
         const expected = createHash("sha256")
@@ -157,7 +174,9 @@ export class MaiBotBridge extends EventEmitter {
           await this.close();
           this.status(
             "error",
-            `本机端口 ${settings.adapterPort} 无法使用，请检查端口占用`,
+            settings.adapterPort
+              ? `本机端口 ${settings.adapterPort} 无法使用。请释放该端口，或重新自动分配并导出适配器配置。`
+              : "无法自动分配本机接入端口，请检查系统网络权限后重试",
           );
           throw error;
         }
@@ -179,7 +198,7 @@ export class MaiBotBridge extends EventEmitter {
         }, 20000);
         this.status(
           "connecting",
-          `接入已开启（127.0.0.1:${settings.adapterPort}），等待 MaiBot 适配器`,
+          `接入已开启（127.0.0.1:${this.localPort}），等待 MaiBot 适配器`,
         );
       });
     this.tail = task;
@@ -197,6 +216,7 @@ export class MaiBotBridge extends EventEmitter {
     const socket = new WebSocket(parsedUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
+        "X-Mai-Desktop-Features": "bot-name",
         ...(this.settings?.serverAccountId
           ? { "X-Mai-Account": this.settings.serverAccountId }
           : {}),
@@ -237,6 +257,7 @@ export class MaiBotBridge extends EventEmitter {
       generation,
       capabilities: [],
       transport: "gateway",
+      botName: null,
     };
     this.peers.add(peer);
     peer.timer = setTimeout(
@@ -305,6 +326,7 @@ export class MaiBotBridge extends EventEmitter {
           peer.sessionId = frame.sessionId;
           peer.capabilities = frame.capabilities;
           peer.transport = frame.transport ?? "gateway";
+          peer.botName = frame.botName ?? null;
           this.active = peer;
           this.remoteAttempts = 0;
           this.rejectPending("插件实例已切换，之前请求的内核接收状态未确认");
@@ -343,7 +365,12 @@ export class MaiBotBridge extends EventEmitter {
         } else if (frame.type === "reply") {
           if (frame.sessionId !== peer.sessionId)
             throw new Error("插件返回了其他会话的消息");
-          void this.receive(peer, frame.id, parseReply(frame)).catch(() => {});
+          void this.receive(
+            peer,
+            frame.id,
+            parseReply(frame),
+            frame.botName,
+          ).catch(() => {});
         } else throw new Error("插件发送了顺序错误的握手消息");
       } catch (error) {
         const message =
@@ -392,13 +419,22 @@ export class MaiBotBridge extends EventEmitter {
     });
   }
 
-  private async receive(peer: Peer, id: string, reply: Reply) {
+  private async receive(
+    peer: Peer,
+    id: string,
+    reply: Reply,
+    botName?: string,
+  ) {
     const key = `${peer.generation}:${peer.sessionId}:${id}`;
     try {
       if (!this.acceptedReplies.has(key)) {
         let saving = this.savingReplies.get(key);
         if (!saving) {
           if (this.savingReplies.size >= 64) throw new Error("待保存回复过多");
+          if (botName && botName !== peer.botName) {
+            peer.botName = botName;
+            this.emit("bot-name", botName);
+          }
           // ack 回调由主进程在媒体及历史持久化完成后触发。
           saving = new Promise<void>((resolve, reject) => {
             const complete = (error?: Error) => {

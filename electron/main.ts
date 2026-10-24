@@ -30,6 +30,8 @@ import {
 } from "./server-certificates";
 import { adapterConfig, messageAdapterConfig, type Reply } from "./protocol";
 import { StateStore } from "./store";
+import { developmentRendererUrl } from "./renderer-source";
+import { registerRecoveryShortcut } from "./recovery-shortcut";
 import {
   inlineAttachment,
   mediaResponse,
@@ -139,6 +141,7 @@ let qqLogin: { server: string; proof: LoginProof } | null = null;
 let historyEpoch = 0;
 let repliesBeforeConnection = new Set<string>();
 let store: StateStore;
+let recoveryShortcut: string | null = null;
 const live2dCores: Partial<Record<Live2DRuntime, Live2DCore>> = {};
 const live2dCoreDownloads: Partial<Record<Live2DRuntime, Promise<Live2DCore>>> =
   {};
@@ -232,6 +235,8 @@ async function observeScreen(now: number) {
 function snapshot(): Snapshot {
   return structuredClone({
     ...store.state,
+    recoveryShortcut,
+    botName: bridge.botName,
     live2dCoreReady: Boolean(live2dCores.modern),
     live2dLegacyReady: Boolean(live2dCores.legacy),
     live2dCoreDownloading: Object.values(live2dCoreDownloads).some(Boolean),
@@ -493,12 +498,20 @@ function loadWindow(window: BrowserWindow, view: string) {
   };
   window.webContents.on("did-start-loading", resetActivity);
   window.webContents.on("render-process-gone", resetActivity);
-  if (process.env.ELECTRON_RENDERER_URL)
-    void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=${view}`);
-  else
-    void window.loadFile(join(here, "../renderer/index.html"), {
-      query: { view },
-    });
+  const origin = developmentRendererUrl(
+    app.isPackaged,
+    process.env.ELECTRON_RENDERER_URL,
+  );
+  const loading = origin
+    ? window.loadURL(`${origin}/?view=${view}`)
+    : window.loadFile(join(here, "../renderer/index.html"), {
+        query: { view },
+      });
+  return loading.catch((error) => {
+    throw new Error(
+      `无法加载${view === "dashboard" ? "控制面板" : "桌宠"}页面。${origin ? "请重新运行 npm run dev。" : app.isPackaged ? "请重新解压完整的正式发行包。" : "请运行 npm start 重新构建启动。"} ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 }
 
 function createDashboard() {
@@ -526,7 +539,7 @@ function createDashboard() {
       dashboard?.hide();
     }
   });
-  loadWindow(dashboard, "dashboard");
+  return loadWindow(dashboard, "dashboard");
 }
 
 function fitPet(x: number, y: number, cursor?: Electron.Point) {
@@ -596,7 +609,7 @@ function createPet() {
     const [x, y] = pet.getPosition();
     store.petPosition = { x, y };
   });
-  loadWindow(pet, "pet");
+  return loadWindow(pet, "pet");
 }
 
 function applyPetSettings() {
@@ -613,6 +626,24 @@ function applyPetSettings() {
   pet.setAlwaysOnTop(settings.alwaysOnTop, "floating");
 }
 
+async function restorePetInteraction() {
+  store.state.settings = {
+    ...store.state.settings,
+    petVisible: true,
+    clickThrough: false,
+  };
+  drag = null;
+  // 恢复输入不能被写盘队列或保存失败阻塞。
+  if (pet && !pet.isDestroyed()) pet.setIgnoreMouseEvents(false);
+  applyPetSettings();
+  broadcast();
+  try {
+    await store.save();
+  } catch {
+    activity("已恢复鼠标交互，但设置未能保存，请检查数据目录后重试。", "error");
+  }
+}
+
 async function updateSettings(patch: Partial<Settings>) {
   const parsed = settingsPatchSchema.parse(patch);
   if (
@@ -621,6 +652,12 @@ async function updateSettings(patch: Partial<Settings>) {
   )
     throw new Error("所选角色不存在");
   const previous = store.state.settings;
+  if (
+    parsed.nickname !== undefined &&
+    parsed.nickname !== previous.nickname &&
+    parsed.followBotName === undefined
+  )
+    parsed.followBotName = false;
   if (
     "ttsEngine" in parsed ||
     "ttsProvider" in parsed ||
@@ -650,7 +687,7 @@ async function updateSettings(patch: Partial<Settings>) {
     await bridge.disconnect();
     activity("连接配置已更新，请重新连接 MaiBot");
   }
-  store.state.settings = { ...previous, ...parsed };
+  store.state.settings = { ...store.state.settings, ...parsed };
   if (parsed.petPositionLocked === true) drag = null;
   if (connectionChanged)
     await localServer.stopUnless(
@@ -786,9 +823,11 @@ function updateTrayMenu() {
     Menu.buildFromTemplate([
       { label: "打开陪伴空间", click: () => dashboard?.show() },
       {
-        label: "召回桌宠（Ctrl+Shift+M）",
+        label: recoveryShortcut
+          ? `召回桌宠（${recoveryShortcut}）`
+          : "召回桌宠",
         click: () => {
-          void updateSettings({ petVisible: true, clickThrough: false });
+          void restorePetInteraction();
           pet?.show();
           if (pet) {
             const a = screen.getPrimaryDisplay().workArea;
@@ -834,7 +873,104 @@ async function ensureAdapterToken() {
   broadcast();
 }
 
+let localAdapterOpening: { key: string; promise: Promise<void> } | undefined;
+let localAdapterReadyKey: string | undefined;
+
+function localAdapterKey(settings: Settings, token: string) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        settings.connectionMode,
+        settings.adapterPort,
+        settings.adapterScope,
+        settings.platform,
+        settings.botId,
+        settings.userId,
+        settings.userName,
+        token,
+      ]),
+    )
+    .digest("hex");
+}
+
+async function connectLocalAdapter() {
+  await ensureAdapterToken();
+  const settings = store.state.settings;
+  if (settings.connectionMode !== "local")
+    throw new Error("接入配置已变更，请重试");
+  const token = credential("adapterToken");
+  const key = localAdapterKey(settings, token);
+  const currentKey = () =>
+    localAdapterKey(store.state.settings, credential("adapterToken"));
+  const changed = () =>
+    new Error("本机接入已取消或配置已变更，请重新开启后导出");
+  if (localAdapterOpening?.key === key) return localAdapterOpening.promise;
+  store.selectHistory("local");
+  if (
+    bridge.localPort === settings.adapterPort &&
+    localAdapterReadyKey === key &&
+    ["connecting", "connected", "reconnecting"].includes(bridge.phase)
+  ) {
+    await store.flush();
+    if (!bridge.localPort || currentKey() !== key) throw changed();
+    return;
+  }
+  const operation = { key, promise: Promise.resolve() };
+  localAdapterReadyKey = undefined;
+  const discard = async (port: number | undefined) => {
+    if (
+      port &&
+      localAdapterOpening === operation &&
+      bridge.localPort === port
+    ) {
+      localAdapterReadyKey = undefined;
+      await bridge.disconnect();
+    }
+    throw changed();
+  };
+  operation.promise = (async () => {
+    await bridge.connect({ ...settings }, token);
+    const port = bridge.localPort;
+    if (!port || currentKey() !== key || localAdapterOpening !== operation)
+      return discard(port);
+    let savedKey = key;
+    if (settings.adapterPort === 0) {
+      // 先真正绑定并保持监听，再保存实际端口；不经过会断开监听的 updateSettings。
+      store.state.settings = { ...store.state.settings, adapterPort: port };
+      savedKey = currentKey();
+      operation.key = savedKey;
+      try {
+        await store.save();
+      } catch {
+        if (localAdapterOpening === operation && currentKey() === savedKey) {
+          store.state.settings = { ...store.state.settings, adapterPort: 0 };
+          await bridge.disconnect();
+          await store.save().catch(() => {});
+          broadcast();
+        }
+        throw new Error("自动分配的端口未能保存，请检查数据目录后重试");
+      }
+    } else {
+      await store.flush();
+    }
+    if (
+      bridge.localPort !== port ||
+      currentKey() !== savedKey ||
+      localAdapterOpening !== operation
+    )
+      return discard(port);
+    localAdapterReadyKey = savedKey;
+    broadcast();
+  })().finally(() => {
+    if (localAdapterOpening === operation) localAdapterOpening = undefined;
+  });
+  localAdapterOpening = operation;
+  return operation.promise;
+}
+
 async function connectAdapter() {
+  if (store.state.settings.connectionMode === "local")
+    return connectLocalAdapter();
   if (store.state.settings.connectionMode === "server") {
     if (!credential("serverToken"))
       throw new Error(
@@ -843,9 +979,6 @@ async function connectAdapter() {
     store.selectHistory("server:pending");
     if (store.state.settings.serverAccountId)
       await ensureLocalServer(store.state.settings.serverUrl);
-  } else {
-    await ensureAdapterToken();
-    store.selectHistory("local");
   }
   await bridge.connect(
     store.state.settings,
@@ -1102,7 +1235,7 @@ async function commands(
       await replyQueue;
       ++historyEpoch;
       store.restoreServerAccount(server, id);
-      await updateSettings({ serverAccountId: id, nickname: selected.name });
+      await updateSettings({ serverAccountId: id });
       await connectAdapter();
       return;
     }
@@ -1189,6 +1322,15 @@ async function commands(
         ],
       });
       if (result.canceled || !result.filePath) return false;
+      // 自动端口必须已真实绑定且落盘；重复导出复用当前监听，不打断适配器。
+      await connectLocalAdapter();
+      if (
+        store.state.settings.connectionMode !== "local" ||
+        bridge.localPort !== store.state.settings.adapterPort ||
+        localAdapterReadyKey !==
+          localAdapterKey(store.state.settings, credential("adapterToken"))
+      )
+        throw new Error("接入配置已变更，请重新导出适配器配置");
       await writeFile(
         result.filePath,
         (standalone ? messageAdapterConfig : adapterConfig)(
@@ -1586,7 +1728,7 @@ async function commands(
       return;
     }
     case "showPet":
-      await updateSettings({ petVisible: true, clickThrough: false });
+      await restorePetInteraction();
       return;
     case "showDashboard": {
       const page = z
@@ -1803,7 +1945,9 @@ void app
     ipcMain.on("mai:stop-playback", (event) => {
       if (trusted(event.sender)) stopPlayback();
     });
+    bridge.on("bot-name", () => broadcast());
     bridge.on("status", (status: Snapshot["connection"]) => {
+      if (!bridge.localPort) localAdapterReadyKey = undefined;
       ++historyEpoch;
       store.state.liveReplies = [];
       if (
@@ -1940,14 +2084,24 @@ void app
         });
     });
     localServer.on("log", (text: string) => activity(text));
-    createDashboard();
-    createPet();
+    recoveryShortcut = registerRecoveryShortcut(
+      (accelerator, callback) => globalShortcut.register(accelerator, callback),
+      () => {
+        void restorePetInteraction();
+        dashboard?.show();
+        dashboard?.focus();
+      },
+    );
+    if (recoveryShortcut !== "Ctrl + Shift + M")
+      activity(
+        recoveryShortcut
+          ? `Ctrl + Shift + M 已被占用，恢复交互请按 ${recoveryShortcut}。`
+          : "恢复交互快捷键暂不可用，可在偏好设置或托盘菜单关闭鼠标穿透。",
+        "error",
+      );
+    await Promise.all([createDashboard(), createPet()]);
     createTray();
     scheduleVoiceStatus();
-    globalShortcut.register("CommandOrControl+Shift+M", () => {
-      void updateSettings({ petVisible: true, clickThrough: false });
-      dashboard?.show();
-    });
     scheduler = setInterval(() => {
       const now = Date.now();
       void observeScreen(now);
@@ -1987,6 +2141,7 @@ void app
       void connectAdapter().catch((error) => activity(String(error), "error"));
   })
   .catch((error) => {
+    console.error("Mai 启动失败：", error);
     dialog.showErrorBox("Mai 启动失败", String(error));
     app.quit();
   });

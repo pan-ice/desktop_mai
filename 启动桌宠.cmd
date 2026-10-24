@@ -1,4 +1,5 @@
 @echo off
+setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 where node >nul 2>nul
@@ -11,8 +12,9 @@ if not exist "node_modules\electron\dist\electron.exe" (
   call npm ci
   if errorlevel 1 exit /b 1
 )
-if not exist "out\main\index.js" (
-  call npm run build
-  if errorlevel 1 exit /b 1
-)
 call npm start
+if errorlevel 1 (
+  echo 启动未完成，请查看上方错误信息。
+  pause
+  exit /b 1
+)

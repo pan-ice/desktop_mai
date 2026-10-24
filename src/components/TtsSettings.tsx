@@ -20,6 +20,7 @@ import {
   type TtsProvider,
 } from "../../shared/tts";
 import type { Settings, Snapshot } from "../../shared/types";
+import { displayBotName } from "../../shared/bot-name";
 
 export function TtsSettings({ state }: { state: Snapshot }) {
   const saved = JSON.stringify(state.settings);
@@ -40,9 +41,16 @@ export function TtsSettings({ state }: { state: Snapshot }) {
   const [file, setFile] = useState<File | null>(null);
   const [fileUrl, setFileUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [testText, setTestText] = useState(
-    `你好，我是${state.settings.nickname}。今天也想陪你一起度过。`,
-  );
+  const defaultTestText = `你好，我是${displayBotName(state)}。今天也想陪你一起度过。`;
+  const [testText, setTestText] = useState(defaultTestText);
+  const previousDefaultText = useRef(defaultTestText);
+  useEffect(() => {
+    const previous = previousDefaultText.current;
+    previousDefaultText.current = defaultTestText;
+    setTestText((current) =>
+      current === previous ? defaultTestText : current,
+    );
+  }, [defaultTestText]);
   const provider = draft.ttsProvider;
   useEffect(() => {
     setFile(null);

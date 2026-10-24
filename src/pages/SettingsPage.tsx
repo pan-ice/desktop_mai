@@ -11,7 +11,7 @@ import {
 import { api, perform, showToast } from "../api";
 import { Field, Panel, SettingToggle } from "../components/ui";
 import { useSettingsDraft } from "./SensesPage";
-import type { Snapshot } from "../../shared/types";
+import type { Settings, Snapshot } from "../../shared/types";
 
 export function SettingsPage({ state }: { state: Snapshot }) {
   const { draft, change } = useSettingsDraft(state.settings);
@@ -34,11 +34,22 @@ export function SettingsPage({ state }: { state: Snapshot }) {
       showToast("请填写桌宠的名字和你的名字", true);
       return;
     }
+    const patch: Partial<Settings> = {};
+    if (nickname !== state.settings.nickname) {
+      patch.nickname = nickname;
+      patch.followBotName = false;
+    }
+    if (userName !== state.settings.userName) patch.userName = userName;
+    if (!Object.keys(patch).length) {
+      change("nickname", nickname);
+      change("userName", userName);
+      return;
+    }
     namesPending.current = true;
     setSavingNames(true);
     try {
       const saved = await perform(
-        () => api.updateSettings({ nickname, userName }),
+        () => api.updateSettings(patch),
         "称呼已保存",
       );
       if (saved) {
@@ -99,9 +110,28 @@ export function SettingsPage({ state }: { state: Snapshot }) {
         <div className="settings-stack">
           <Panel
             title="我们怎么称呼彼此"
-            subtitle="桌宠显示名与 MaiBot 的内核人格设置分别保存。"
+            subtitle="可以跟随当前 MaiBot 的名字，也可以保留自己的称呼。"
             action={<Heart size={18} className="muted" />}
           >
+            <SettingToggle
+              state={state}
+              name="followBotName"
+              label="跟随 MaiBot 名称"
+              hint={
+                state.settings.followBotName
+                  ? state.botName
+                    ? `当前使用 MaiBot 名称：${state.botName}。手动名字会保留。`
+                    : "等待第一条有效回复或服务提供名称，暂时使用下方保存的名字。"
+                  : state.botName
+                    ? `已获取 MaiBot 名称：${state.botName}。开启后可自动使用。`
+                    : "开启后自动使用 MaiBot 提供的名字，未获取时保留手动称呼。"
+              }
+            />
+            {state.settings.followBotName && (
+              <p className="helper-text">
+                下方保留手动名字；修改并保存后会关闭自动跟随。
+              </p>
+            )}
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -181,7 +211,11 @@ export function SettingsPage({ state }: { state: Snapshot }) {
               state={state}
               name="clickThrough"
               label="鼠标穿透"
-              hint="开启后角色、气泡和按钮都不挡鼠标；Ctrl + Shift + M 恢复交互。"
+              hint={
+                state.recoveryShortcut
+                  ? `开启后独立桌宠的角色、气泡和按钮都不挡鼠标；按 ${state.recoveryShortcut} 恢复交互。`
+                  : "开启后独立桌宠不挡鼠标；可在本页或托盘菜单关闭穿透。恢复交互快捷键暂不可用。"
+              }
             />
             <Field label={`角色大小 · ${Math.round(scaleValue * 100)}%`}>
               <input
@@ -259,10 +293,14 @@ export function SettingsPage({ state }: { state: Snapshot }) {
             </div>
             <div className="shortcut-row">
               <Keyboard size={17} />
-              <span>召回桌宠与控制面板</span>
-              <kbd>Ctrl</kbd>
-              <kbd>Shift</kbd>
-              <kbd>M</kbd>
+              <span>
+                {state.recoveryShortcut
+                  ? "召回桌宠与控制面板"
+                  : "组合键暂不可用，请通过托盘召回"}
+              </span>
+              {state.recoveryShortcut?.split(" + ").map((key) => (
+                <kbd key={key}>{key}</kbd>
+              ))}
             </div>
           </Panel>
           <Panel

@@ -9,7 +9,9 @@ import { MaiBotBridge } from "../electron/bridge";
 import { adapterConfig, type Reply } from "../electron/protocol";
 import { defaultSettings } from "../shared/defaults";
 
-const pluginRoot = resolve("MaiBot/plugins/desktop_pet_adapter");
+const pluginRoot = resolve(
+  process.env.MAI_DESKTOP_ADAPTER_ROOT || "MaiBot/plugins/desktop_pet_adapter",
+);
 const python =
   process.env.MAI_PYTHON ||
   join(

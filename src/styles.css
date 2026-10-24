@@ -1441,6 +1441,32 @@ kbd {
   gap: 8px;
   font-size: 12px;
 }
+.adapter-port-field > label {
+  font-size: 12px;
+}
+.adapter-port-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.adapter-port-controls input {
+  flex: 1 1 150px;
+  min-width: 0;
+  width: 100%;
+}
+.adapter-port-controls .button {
+  flex: 0 0 auto;
+}
+.adapter-port-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.adapter-port-status.dirty {
+  color: var(--green-dark);
+}
 .connection-more {
   padding: 16px 20px;
   border: 1px solid var(--line);
@@ -1619,6 +1645,7 @@ kbd {
 }
 .shortcut-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
   align-items: center;
   color: var(--muted);

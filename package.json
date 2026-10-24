@@ -1,17 +1,17 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.4.1",
+  "version": "0.4.6",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
   "author": "Mai Desktop Contributors",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "build": "npm run typecheck && electron-vite build",
-    "start": "electron .",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
     "test": "vitest run",
     "test:protocol": "npm run test:message-adapter",
     "test:large-audio": "vitest run --config vitest.large-audio.config.ts",
@@ -21,6 +21,11 @@
     "test:plugin": "node scripts/test-plugin.mjs",
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "test:ui": "node scripts/ui-smoke.mjs",
+    "test:ports": "node scripts/port-smoke.mjs",
+    "test:startup": "node scripts/startup-smoke.mjs",
+    "test:runtime": "node scripts/runtime-smoke.mjs",
+    "test:bot-name": "node scripts/bot-name-smoke.mjs",
+    "test:pet-bubble": "node scripts/pet-bubble-smoke.mjs",
     "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
     "test:interaction": "node scripts/interaction-smoke.mjs",
     "test:lifecycle": "node scripts/lifecycle-smoke.mjs",
@@ -32,6 +37,7 @@
     "test:window-scale": "node scripts/window-scale-smoke.mjs --dev && node scripts/window-scale-smoke.mjs",
     "test:pet-drag": "node scripts/pet-drag-smoke.mjs",
     "test:pet-click-through": "node scripts/pet-click-through-smoke.mjs",
+    "test:pet-shortcuts": "node scripts/pet-shortcut-smoke.mjs && node scripts/pet-shortcut-smoke.mjs --conflict",
     "test:pet-topmost": "node scripts/pet-topmost-smoke.mjs",
     "test:live2d": "node scripts/live2d-smoke.mjs",
     "test:live2d-compat": "node scripts/live2d-compat-smoke.mjs",
@@ -89,6 +95,9 @@
       "package.json"
     ],
     "asar": true,
+    "electronFuses": {
+      "runAsNode": false
+    },
     "win": {
       "icon": "resources/icon.ico",
       "target": [

@@ -138,8 +138,7 @@ async function create(page, name) {
   let id;
   await until(async () => {
     const current = await state(page);
-    if (current.settings.nickname !== name || !current.settings.serverAccountId)
-      return false;
+    if (!current.settings.serverAccountId) return false;
     id = current.settings.serverAccountId;
     return (
       current.connection.phase === "connected" && !current.historySync.loading

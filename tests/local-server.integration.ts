@@ -7,7 +7,9 @@ import { join, resolve, sep } from "node:path";
 import { AccountClient } from "../electron/accounts";
 import { LocalServer } from "../electron/local-server";
 
-const plugin = resolve("MaiBot/plugins/desktop_pet_adapter");
+const plugin = resolve(
+  process.env.MAI_DESKTOP_ADAPTER_ROOT || "MaiBot/plugins/desktop_pet_adapter",
+);
 const python =
   process.env.MAI_PYTHON ||
   join(

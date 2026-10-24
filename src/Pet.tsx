@@ -20,29 +20,25 @@ import { Avatar } from "./components/Avatar";
 import { Toasts } from "./components/ui";
 import { stopSpeech, useRecorder, useSpeechReplies } from "./hooks/useVoice";
 import { useConversation } from "./hooks/useConversation";
+import { usePetBubble } from "./hooks/usePetBubble";
 import { PET_CHARACTER, PET_SURFACE } from "../shared/pet-layout";
 import { interactionLabel } from "../shared/interaction";
+import { displayBotName } from "../shared/bot-name";
 
 export function Pet() {
   const state = useSnapshot();
   const [chat, setChat] = useState(false);
   const [text, setText] = useState("");
-  const [bubble, setBubble] = useState(true);
+  const bubble = usePetBubble(state);
   const pointer = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const model = state.models.find(
     (item) => item.id === state.settings.activeModelId,
-  );
-  const reply = state.history.findLast(
-    (message) => message.role === "assistant",
   );
   const recorder = useRecorder(async (transcript) => {
     await api.send({ text: transcript, source: "voice" });
   });
   useSpeechReplies(state);
   useConversation(state);
-  useEffect(() => {
-    if (reply) setBubble(true);
-  }, [reply?.id]);
   useEffect(() => {
     if (state.settings.petPositionLocked) {
       pointer.current = null;
@@ -60,9 +56,9 @@ export function Pet() {
       // Electron 的同源窗口共享页面缩放；只缩放桌宠容器，避免影响控制面板。
       style={{ ...PET_SURFACE, zoom: state.settings.petScale }}
     >
-      {bubble && (
+      {bubble.visible && (
         <div className="pet-bubble">
-          <button aria-label="关闭气泡" onClick={() => setBubble(false)}>
+          <button aria-label="关闭气泡" onClick={bubble.dismiss}>
             <X size={12} />
           </button>
           <p>
@@ -72,16 +68,14 @@ export function Pet() {
                   state.voiceInput === "transcribing" ||
                   state.voiceInput === "recording"
                 ? interactionLabel(state)
-                : reply?.text
-                  ? reply.text.slice(0, 150)
-                  : `我是${state.settings.nickname}，很高兴在这里遇见你。`}
+                : bubble.text}
           </p>
           <span
             className={`pet-bubble-status ${state.connection.phase === "connected" ? "online" : ""}`}
           >
             <i />
             {state.connection.phase === "connected"
-              ? interactionLabel(state) || state.settings.nickname
+              ? interactionLabel(state) || displayBotName(state)
               : "等待连接 MaiBot"}
           </span>
         </div>
@@ -175,7 +169,7 @@ export function Pet() {
           api.petDrag("end");
           if (value && !value.moved) {
             void perform(() => api.setMood("happy"));
-            setBubble(true);
+            bubble.show();
           }
         }}
         onPointerCancel={() => {

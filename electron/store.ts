@@ -54,10 +54,13 @@ export class StateStore {
           text: "已升级至独立插件接入。聊天记录与会话身份已保留，可在「连接与账号」的「旧版接入」中导出插件配置。旧数据已备份。",
         });
       }
+      const settings = settingsPatchSchema.parse(data.settings);
       this.state.settings = {
         ...defaultSettings,
         ttsProfiles: {},
-        ...settingsPatchSchema.parse(data.settings),
+        ...settings,
+        // 旧配置没有来源标记，不能把用户原有称呼猜成自动默认值。
+        followBotName: settings.followBotName ?? false,
       };
       this.state.history = data.history.slice(-1000);
       this.historyScope = data.historyScope || "local";

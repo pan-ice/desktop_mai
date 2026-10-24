@@ -34,11 +34,13 @@ export type Page = "home" | "chat" | "models" | "senses" | "core" | "settings";
 
 export interface Settings {
   nickname: string;
+  followBotName: boolean;
   userName: string;
   userId: string;
   connectionMode: "local" | "server";
   serverUrl: string;
   serverAccountId: string;
+  /** 0 表示等待自动分配；绑定成功后持久化实际端口，供适配器稳定重连。 */
   adapterPort: number;
   adapterScope: string;
   platform: string;
@@ -169,6 +171,10 @@ export interface Snapshot {
   voiceInput: VoiceInputPhase;
   replyStatus: "idle" | "sending" | "waiting";
   playback: PlaybackState;
+  /** 本次启动实际注册成功的恢复组合键；不可用时为空。 */
+  recoveryShortcut: string | null;
+  /** 当前活动连接提供的 MaiBot 昵称，不持久缓存。 */
+  botName: string | null;
   desktop: boolean;
   version: string;
 }

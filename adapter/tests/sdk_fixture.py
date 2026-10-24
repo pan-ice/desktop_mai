@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
@@ -21,6 +22,7 @@ def emit(event, **values):
 
 async def main():
     config = Config.load(Path(sys.argv[1]))
+    bot_name = os.environ.get("MAI_TEST_BOT_NAME", "麦麦")
     server = MessageServer(host="127.0.0.1", port=urlsplit(config.maibot_url).port,
                            enable_token=True, custom_logger=logging.getLogger("fixture"))
     server.add_valid_token(config.maibot_token)
@@ -35,7 +37,7 @@ async def main():
             "platform": identity.platform, "message_id": "reply-" + info["message_id"],
             "time": float(info["time"]),
             "user_info": {"platform": identity.platform, "user_id": identity.account_id,
-                          "user_nickname": "麦麦"},
+                          "user_nickname": bot_name},
             "additional_config": {"platform_io_account_id": identity.account_id,
                                   "platform_io_scope": identity.scope,
                                   "platform_io_target_user_id": identity.user_id}},
@@ -75,6 +77,12 @@ async def main():
                 for socket in list(server.connection.active_websockets):
                     await socket.close(code=1012, reason="integration reconnect")
                 emit("core_dropped")
+            elif line.startswith("BOT_NAME "):
+                next_name = line[len("BOT_NAME "):].strip()
+                if not next_name or len(next_name) > 40:
+                    raise ValueError("测试名字必须为 1–40 字符")
+                bot_name = next_name
+                emit("bot_name", name=bot_name)
     finally:
         if adapter_task:
             adapter_task.cancel()
