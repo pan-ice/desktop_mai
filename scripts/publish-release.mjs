@@ -67,17 +67,25 @@ function gh(args, allowFailure = false) {
 
 // A manual run may create a new tag at the exact built commit. Never publish
 // freshly built assets against an older tag, or replace a public release.
-const tagged = gh(
-  ["api", `repos/${process.env.GH_REPO}/commits/${tag}`, "--jq", ".sha"],
+const tagReference = gh(
+  ["api", `repos/${process.env.GH_REPO}/git/ref/tags/${tag}`],
   true,
 );
-if (tagged.status === 0)
+if (tagReference.status === 0) {
+  // The refs endpoint returns 404 for a missing tag. The commits endpoint
+  // instead returns 422, so only use it to peel a tag known to exist.
+  const tagged = gh([
+    "api",
+    `repos/${process.env.GH_REPO}/commits/${tag}`,
+    "--jq",
+    ".sha",
+  ]);
   assert.equal(
     tagged.stdout.trim(),
     process.env.GITHUB_SHA,
     "版本标签与构建提交不一致",
   );
-else assert.match(tagged.stderr, /404/, "无法确认远程版本标签");
+} else assert.match(tagReference.stderr, /404/, "无法确认远程版本标签");
 const existing = gh(["release", "view", tag, "--json", "isDraft"], true);
 if (existing.status === 0)
   assert.equal(
