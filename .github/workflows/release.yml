@@ -64,6 +64,9 @@ jobs:
             assert.equal(process.env.GITHUB_REF_NAME, `v${version}`, '版本标签必须与 package.json 一致');
           JS
       - run: npm ci
+      - name: 准备网络测试的第二个回环地址
+        if: matrix.platform == 'mac'
+        run: sudo ifconfig lo0 alias 127.0.0.2 up
       - run: npm test
       - name: 独立适配器验收与打包
         if: matrix.platform == 'win'
