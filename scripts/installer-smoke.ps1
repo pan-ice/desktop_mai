@@ -67,22 +67,11 @@ function Verify-Installed {
     Assert-True ($registration.Count -eq 1) 'Expected one Windows uninstall registration.'
     Assert-True ($registration[0].DisplayVersion -eq $package.version) 'Registered version is incorrect.'
     Assert-True ($registration[0].UninstallString.Contains($uninstaller)) 'Uninstall entry points outside the test installation.'
-    $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $shortcuts) {
         Assert-True (Test-Path -LiteralPath $link) "Missing shortcut: $link"
-        $shortcutTarget = $shell.CreateShortcut($link).TargetPath
-        # Windows shell links may expose an 8.3 alias. Compare canonical paths
-        # to the actual installed file, keeping a wrong/missing target fatal.
-        $shortcutCheck = @'
-import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
-const [actual, expected] = process.argv.slice(1);
-assert.ok(actual, "Shortcut returned an empty target");
-assert.equal(realpathSync.native(actual).toLowerCase(), realpathSync.native(expected).toLowerCase(), `Incorrect shortcut target: ${actual}`);
-'@
-        & node --input-type=module -e $shortcutCheck $shortcutTarget $installedExe
-        Assert-True ($LASTEXITCODE -eq 0) "Incorrect shortcut target: $link"
     }
+    & node node_modules/electron/cli.js scripts/verify-shortcuts.cjs $installedExe @shortcuts
+    Assert-True ($LASTEXITCODE -eq 0) 'Installed shortcuts do not point to the application.'
 }
 
 Assert-True (Test-Path -LiteralPath $installer) 'Build the Setup EXE first.'
