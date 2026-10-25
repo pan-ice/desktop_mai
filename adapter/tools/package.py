@@ -11,7 +11,7 @@ def package(destination: Path) -> Path:
     version = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
     destination.mkdir(parents=True, exist_ok=True)
     archive = destination / f"MaiBot-Desktop-Message-Adapter-{version}.zip"
-    files = [root / name for name in ["README.md", "pyproject.toml", "uv.lock", "requirements.txt", "config.example.toml", ".gitignore"]]
+    files = [root / name for name in ["README.md", "LICENSE", "pyproject.toml", "uv.lock", "requirements.txt", "config.example.toml", ".gitignore"]]
     for directory in ["desktop_adapter", "tests", "tools"]:
         files.extend(sorted((root / directory).glob("*.py")))
     # 先确认清单完整；缺锁文件等情况不生成不完整的发行包。

@@ -28,6 +28,8 @@ const extract = (file) => {
 const info = JSON.parse(extract("package.json"));
 const expected = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 assert.equal(info.version, expected.version);
+assert.equal(info.license, "MIT");
+assert.deepEqual(extract("LICENSE"), await readFile(resolve("LICENSE")));
 assert.equal(info.main, "out/main/index.js");
 assert.ok(
   await productionBuildCurrent(),
@@ -37,7 +39,7 @@ assert.ok(
 for (const file of files) {
   assert.match(
     file,
-    /^(?:out|resources|node_modules)(?:\/|$)|^package\.json$/,
+    /^(?:out|resources|node_modules)(?:\/|$)|^(?:package\.json|LICENSE)$/,
     `不应打包项目源码、用户数据或临时文件：${file}`,
   );
   if (!file.startsWith("node_modules/")) {

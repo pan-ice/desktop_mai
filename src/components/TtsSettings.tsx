@@ -90,7 +90,8 @@ export function TtsSettings({ state }: { state: Snapshot }) {
   const save = async () => {
     const submittedKey = keys[provider];
     if (submittedKey) {
-      await api.setCredential(spec.key, submittedKey);
+      if (submittedKey.trim())
+        await api.setCredential(spec.key, submittedKey.trim());
       setKeys((current) =>
         current[provider] === submittedKey
           ? { ...current, [provider]: "" }
@@ -163,7 +164,7 @@ export function TtsSettings({ state }: { state: Snapshot }) {
   return (
     <Panel
       title="让麦麦的声音陪着你"
-      subtitle="导入喜欢的声音，让之后的回复用这个声音朗读。"
+      subtitle="导入喜欢的声音，或填写已有音色 ID，用于回复朗读。"
       action={<Volume2 size={19} className="muted" />}
     >
       <VoiceImport
@@ -534,11 +535,6 @@ export function TtsSettings({ state }: { state: Snapshot }) {
         <details className="voice-clone-options" key={provider}>
           <summary>更多音色复刻设置</summary>
           <p className="helper-text">{spec.cloneHint}</p>
-          {provider === "volcengine" && (
-            <p className="helper-text">
-              自定义后付费音色首次正式合成会产生槽位费用，并固定音色。请先在控制台确认复刻试听效果。
-            </p>
-          )}
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -574,9 +570,7 @@ export function TtsSettings({ state }: { state: Snapshot }) {
                     accept={
                       provider === "siliconflow" || provider === "mimo"
                         ? ".mp3,.wav"
-                        : provider === "minimax"
-                          ? ".mp3,.wav,.m4a"
-                          : ".mp3,.wav,.m4a,.ogg,.aac"
+                        : ".mp3,.wav,.m4a"
                     }
                     onChange={(event) => {
                       const selected = event.target.files?.[0] || null;
@@ -585,9 +579,7 @@ export function TtsSettings({ state }: { state: Snapshot }) {
                         selected.size >
                           (provider === "mimo"
                             ? MIMO_REFERENCE_MAX_BYTES
-                            : provider === "volcengine"
-                              ? 10_000_000
-                              : 20_000_000)
+                            : 20_000_000)
                       ) {
                         showToast("参考音频超过服务商大小限制", true);
                         event.target.value = "";
@@ -611,21 +603,12 @@ export function TtsSettings({ state }: { state: Snapshot }) {
                   />
                 </Field>
               )}
-              {(provider === "minimax" || provider === "volcengine") && (
+              {provider === "minimax" && (
                 <Field
-                  label={
-                    provider === "volcengine"
-                      ? "复刻音色 ID"
-                      : "自定义音色 ID（可选）"
-                  }
-                  hint={
-                    provider === "volcengine"
-                      ? "填写 S_ 开头的已购槽位，或 8–256 位英文字母开头的自定义 ID。"
-                      : "留空自动生成，ID 不能与已有音色重复。"
-                  }
+                  label="自定义音色 ID（可选）"
+                  hint="留空自动生成，ID 不能与已有音色重复。"
                 >
                   <input
-                    required={provider === "volcengine"}
                     maxLength={256}
                     value={voiceId}
                     onChange={(event) => setVoiceId(event.target.value)}

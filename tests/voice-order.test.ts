@@ -39,7 +39,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function fixture(texts = ["1", "2", "3"]) {
+async function fixture(texts = ["1", "2", "3"], structured = false) {
   const state = emptySnapshot();
   state.settings.voiceEnabled = true;
   state.settings.ttsEngine = "api";
@@ -76,6 +76,7 @@ async function fixture(texts = ["1", "2", "3"]) {
   }
   vi.stubGlobal("Audio", FakeAudio);
   Object.assign(runtime.api, {
+    synthesizeResult: undefined,
     snapshot: async () => structuredClone(state),
     onPlayback: () => () => {},
     onStopPlayback: () => () => {},
@@ -88,10 +89,33 @@ async function fixture(texts = ["1", "2", "3"]) {
     },
   });
   const { speak, stopSpeech } = await import("../src/hooks/useVoice");
+  const { requestSynthesis } = await import("../src/audio/synthesis");
   const { ReplySpeechQueue } = await import("../src/audio/reply-speech-queue");
+  if (structured) {
+    runtime.api.synthesizeResult = async (text: string) => {
+      try {
+        const value = await (
+          runtime.api.synthesize as (text: string) => Promise<string>
+        )(text);
+        return structuredClone({ ok: true, value });
+      } catch (error) {
+        // This is the plain safe main->preload->renderer result. No custom
+        // Error properties are expected to survive the bridge.
+        return JSON.parse(
+          JSON.stringify({
+            ok: false,
+            error: (error as Error).message,
+            errorKind: "tts_final",
+          }),
+        );
+      }
+    };
+  }
   const queue = new ReplySpeechQueue({
     startedAt: 0,
-    synthesize: runtime.api.synthesize as (text: string) => Promise<string>,
+    synthesize: structured
+      ? (text, signal) => requestSynthesis(text, "prefetch", signal)
+      : (runtime.api.synthesize as (text: string) => Promise<string>),
     play: (text, settings, dataUrl, prepared) =>
       speak(text, settings, dataUrl, true, prepared),
     stop: () => stopSpeech(false),
@@ -257,3 +281,22 @@ it("长回复内部第二段预合成失败时在该段位置重试，完整播�
   expect(runtime.toast).not.toHaveBeenCalled();
   f.queue.dispose();
 });
+
+it.each([429, 401, 402, 403])(
+  "主进程HTTP %i最终结果不会在预合成失败后倍增重试",
+  async (status) => {
+    const f = await fixture(undefined, true);
+    const error = new Error(`handled HTTP ${status}`);
+    f.requests[1].response.reject(error);
+    await settle();
+    f.requests[0].response.resolve("audio:1");
+    f.requests.find((item) => item.text === "3")!.response.resolve("audio:3");
+    await settle();
+    f.audios[0].onended?.();
+    await settle();
+    expect(f.requests.filter((item) => item.text === "2")).toHaveLength(1);
+    expect(runtime.toast).toHaveBeenCalledExactlyOnceWith(error.message, true);
+    expect(f.played).toEqual(["audio:1", "audio:3"]);
+    f.queue.dispose();
+  },
+);

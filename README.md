@@ -4,10 +4,10 @@
 
 桌宠可通过本仓库 `adapter/` 内的**独立 Python 适配器**接入 MaiBot 官方经典消息服务，按官方 `maim_message` 协议收发私聊。人格、回复策略、表达学习、长期记忆、插件与工具由 MaiBot 负责。原 MessageGateway 网关插件和 QQ 服务器接入继续保留；主动陪伴需要网关插件提供的任务接口。
 
-桌宠客户端与新独立适配器位于私有仓库 [desktop_mai](https://github.com/pan-ice/desktop_mai)，需要访问权限。首次获取：
+桌宠客户端与独立适配器在 [desktop_mai](https://github.com/pan-ice/desktop_mai) 以 [MIT 许可证](LICENSE) 开源。首次获取：
 
 ```powershell
-gh repo clone pan-ice/desktop_mai
+git clone https://github.com/pan-ice/desktop_mai.git
 cd desktop_mai
 ```
 
@@ -43,7 +43,7 @@ Windows 便携版构建：
 npm run dist:win
 ```
 
-生成 `release/Mai-Desktop-Pet-0.4.8-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
+生成 `release/Mai-Desktop-Pet-0.4.10-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
 
 ## 官方消息协议接入
 
@@ -122,7 +122,7 @@ MaiBot 由部署方独立启动和管理，桌宠客户端只负责连接、登�
 
 消息类型、两种内核结构的映射与未支持类型的处理见 [消息对接说明](docs/message-types.md)。
 
-模型朗读支持硅基流动、阿里云百炼、MiniMax、火山引擎、小米 MiMo；各自保存 Key、模型及复刻音色。在「声音与感知」选择服务商，提交参考材料，音色就绪后点击「使用音色」和「试听声音」。百炼需公网参考音频链接，火山采用新版 API Key 和音色槽位 / 自定义 ID。MiMo 可选择预置音色，或在本机保存 MP3 / WAV 参考音色并随每次合成请求发送。配置、计费差异与验证范围见 [在线音色复刻](docs/voice-cloning.md)。录音转写独立配置，MaiBot 已发来的语音直接按顺序播放。
+模型朗读支持硅基流动、阿里云百炼、MiniMax、火山引擎、小米 MiMo；各自保存 Key、模型及音色。在「声音与感知」选择服务商后可导入参考音频；火山由用户在官方控制台上传并完成复刻，桌宠只填写新版 API Key 和已有音色 ID，保存后可手动试听或开启自动朗读。百炼简单导入可直接选本地文件，高级链接复刻需公网参考音频。MiMo 可选择预置音色，或在本机保存 MP3 / WAV 参考音色并随每次合成请求发送。配置、计费差异与验证范围见 [在线音色复刻](docs/voice-cloning.md)。录音转写独立配置，MaiBot 已发来的语音直接按顺序播放。
 
 桌宠默认锁定位置，避免点击时误拖。点击角色旁的锁按钮可解锁后拖动，摆好位置后再次点击即可锁定；「偏好设置」和托盘菜单也能切换「锁定桌宠位置」，重启保留选择。
 
@@ -172,7 +172,9 @@ Live2D、VRM / MMD、PNGTuber 与默认角色的口型跟随正在播放的实�
 
 使用 API 朗读时，可在「声音设置」调整「预缓冲文字条数」：默认提前准备后续 2 条文字回复的开头，支持 0～5 条，0 关闭跨消息预缓冲。播放保持消息到达顺序，MaiBot 原始语音在原位置播放，不会额外合成同一条消息的文字；长回复内部的预合成仍由「长回复连续播放」独立控制。停止、专注或切换会话会清理待播队列，切换音色后后续文字使用新音色；已提交的合成请求仍可能产生费用。
 
-预合成临时失败时，轮到对应消息或分段会重新合成一次，后文等待它完成；再次失败会显示错误，不无限重试。停止或取消后，迟到结果不会触发重试或恢复旧朗读。
+预合成发生普通临时服务错误时，轮到对应消息或分段会重新合成一次，后文等待它完成。限流统一按下述队列策略恢复，达到重试上限或遇到认证、权限、余额错误会直接提示，不叠加前台重试。停止或取消后，迟到结果不会触发重试或恢复旧朗读。
+
+MiMo 朗读、预缓冲与试听共用主进程请求队列，按单请求和至少 700 毫秒的起始间隔准备音频，这是客户端的保守策略。429 会让同一模型的队列共同冷却，并尊重服务返回的 `Retry-After`；单次合成最多尝试 3 次，较长等待会显示受限提示，不提前重发。429 可能表示请求限流，也可能表示账户额度限制；401、403、402 分别提示认证、权限与余额问题，不自动重试。取消操作会移除尚未发送的任务，并中止正在等待的请求。
 
 ## 数据与开发
 
@@ -212,6 +214,7 @@ npm run test:tts-buffer
 npm run test:tts-buffer -- --mode=dev --phase=dev
 npm run test:tts-buffer -- --mode=packaged
 npm run test:tts-order
+npm run test:tts-rate
 npm run test:reply-delivery
 npm run test:startup
 npm run test:runtime -- --mode=dev
@@ -238,3 +241,9 @@ npm run test:adapter
 `test:runtime` 对开发页面、构建页面和实际解包 EXE 使用同一组功能验收；`--mode=packaged` 默认使用 `release/win-unpacked/Mai 桌面伙伴.exe`。增加 `--live2d` 可复验三代模型的双窗口渲染和重启离线复用，需要先通过 `test:live2d-compat` 准备本机测试缓存；此选项本身不下载模型或运行库。
 
 长期维护的模块约定、版本策略和发布检查见 [维护指南](docs/maintenance.md)。插件是单独的私有仓库，克隆桌宠仓库时需按上方步骤获取到该路径；发布 ZIP 提供完整插件源码。尚未发布到插件市场。
+
+## 许可证
+
+本仓库自行编写的桌宠客户端、独立适配器与文档采用 [MIT License](LICENSE)，允许使用、修改和分发，需保留版权及许可声明。独立适配器的源码包同时附带 [adapter/LICENSE](adapter/LICENSE)。
+
+第三方依赖、MaiBot、Live2D Core 与用户导入的角色模型继续适用各自的许可证和使用条款。本仓库的 MIT 许可证不对这些内容重新授权；原网关插件仓库的许可证与可见性单独维护。参考和复用边界见[实现说明](docs/implementation.md#参考与复用边界)。

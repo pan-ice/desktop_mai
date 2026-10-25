@@ -4,6 +4,7 @@ import { speechSegments } from "../../shared/speech-text";
 import { ttsProfile } from "../../shared/tts";
 import type { Settings, Snapshot } from "../../shared/types";
 import { beginPlayback, interruptPlayback } from "../audio/playback";
+import { finalSynthesisError, requestSynthesis } from "../audio/synthesis";
 import {
   ReplySpeechQueue,
   type SynthesisResult,
@@ -113,8 +114,11 @@ let currentAudio: HTMLAudioElement | null = null;
 let playbackGeneration = 0;
 let cancelPlayback: (() => void) | null = null;
 let speechPlayback: ReturnType<typeof beginPlayback> | null = null;
+let synthesisController: AbortController | null = null;
 export function stopSpeech(clearQueue = true) {
   ++playbackGeneration;
+  synthesisController?.abort();
+  synthesisController = null;
   cancelPlayback?.();
   cancelPlayback = null;
   speechSynthesis.cancel();
@@ -132,16 +136,25 @@ export async function speak(
   preserveQueue = false,
   preparedFirst?: Promise<SynthesisResult>,
 ) {
-  stopSpeech(!preserveQueue);
+  // The new playback report stops the previous window. A separate global stop
+  // can echo back after this preview starts and cancel its own synthesis.
+  stopSpeech(false);
+  if (!preserveQueue) window.dispatchEvent(new Event("mai:stop-speech"));
   const generation = playbackGeneration;
+  const controller = new AbortController();
+  synthesisController = controller;
   const segments =
     dataUrl || settings.ttsEngine === "system"
       ? [text]
       : speechSegments(text, settings.ttsProvider).filter((segment) =>
           segment.trim(),
         );
-  const synthesize = (segment: string) =>
-    api.synthesize(segment).then(
+  const synthesize = (segment: string, prefetch = false) =>
+    requestSynthesis(
+      segment,
+      prefetch ? "prefetch" : "foreground",
+      controller.signal,
+    ).then(
       (url) => ({ url, error: undefined }),
       (error: unknown) => ({ url: null, error }),
     );
@@ -179,7 +192,12 @@ export async function speak(
         if (generation !== playbackGeneration || !result) return;
         // Prefetch is optional work: a temporary failure must not consume the
         // reply's place. Retry once when this segment reaches the foreground.
-        if (!dataUrl && prefetched && (result.error || !result.url)) {
+        if (
+          !dataUrl &&
+          prefetched &&
+          (result.error || !result.url) &&
+          !finalSynthesisError(result.error)
+        ) {
           result = await Promise.race([
             synthesize(segment),
             ended.then(() => null),
@@ -219,7 +237,7 @@ export async function speak(
           generation === playbackGeneration &&
           index + 1 < segments.length
         )
-          prepared = synthesize(segments[index + 1]);
+          prepared = synthesize(segments[index + 1], true);
       } else {
         const voices = speechSynthesis.getVoices();
         const utterance = new SpeechSynthesisUtterance(segment);
@@ -244,7 +262,10 @@ export async function speak(
       await ended;
     } catch (error) {
       finish();
-      if (generation === playbackGeneration)
+      if (
+        generation === playbackGeneration &&
+        !(error instanceof Error && error.name === "AbortError")
+      )
         showToast(error instanceof Error ? error.message : String(error), true);
       return;
     }
@@ -257,7 +278,7 @@ export function useSpeechReplies(state: Snapshot) {
   useEffect(() => {
     const value = new ReplySpeechQueue({
       startedAt: started.current,
-      synthesize: (text) => api.synthesize(text),
+      synthesize: (text, signal) => requestSynthesis(text, "prefetch", signal),
       play: (text, settings, dataUrl, preparedFirst) =>
         speak(text, settings, dataUrl, true, preparedFirst),
       stop: () => stopSpeech(false),

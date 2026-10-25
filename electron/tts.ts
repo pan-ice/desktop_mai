@@ -19,6 +19,7 @@ import {
 } from "../shared/tts";
 import type { Settings } from "../shared/types";
 import { NATURAL_SPEECH_INSTRUCTION } from "../shared/speech-delivery";
+import { ttsResponseError } from "./tts-errors";
 
 const MAX_AUDIO = 25 * 1024 * 1024;
 const MAX_JSON = 2 * MAX_AUDIO + 65536;
@@ -36,8 +37,11 @@ async function request(
 ): Promise<Response> {
   let response: Response;
   try {
+    signal.throwIfAborted();
     response = await fetch(url, { ...init, signal, redirect: "error" });
   } catch {
+    if (signal.aborted && signal.reason?.name === "AbortError")
+      throw signal.reason;
     throw new Error(
       signal.aborted
         ? "语音服务请求超时，请稍后重试"
@@ -45,10 +49,9 @@ async function request(
     );
   }
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(
-      `语音服务请求失败（HTTP ${response.status}），请检查 Key、模型、额度和服务权限`,
-    );
+    const error = await ttsResponseError(response);
+    signal.throwIfAborted();
+    throw error;
   }
   return response;
 }
@@ -94,7 +97,8 @@ async function jsonResponse(
     if (!value || typeof value !== "object" || Array.isArray(value))
       throw new Error();
     return value;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
     throw new Error("语音服务返回了无效的数据");
   }
 }
@@ -224,14 +228,19 @@ export async function synthesizeTts(
   key: string,
   text: string,
   dataDirectory?: string,
+  cancellation?: AbortSignal,
 ): Promise<string> {
+  cancellation?.throwIfAborted();
   if (!text.trim() || text.length > 12000)
     throw new Error("朗读内容不能为空且不超过 12000 字符");
   const provider = settings.ttsProvider;
   const profile = ttsProfileSchema.parse(ttsProfile(settings));
   if (!profile.voice) throw new Error("请先选择或填写音色 ID");
   const auth = headers(provider, key);
-  const signal = AbortSignal.timeout(120000);
+  const timeout = AbortSignal.timeout(120000);
+  const signal = cancellation
+    ? AbortSignal.any([timeout, cancellation])
+    : timeout;
   const native = settings.ttsNativeOutput !== false;
   const natural = !native && settings.ttsNaturalSpeech;
   let bytes: Buffer;
@@ -420,6 +429,7 @@ export async function synthesizeTts(
       ),
     );
   }
+  signal.throwIfAborted();
   return ttsAudioUrl(bytes);
 }
 
@@ -516,6 +526,8 @@ export async function createClonedVoice(
   const provider = settings.ttsProvider;
   if (provider === "openai")
     throw new Error("通用语音 API 没有统一的音色复刻接口，请选择具体服务商");
+  if (provider === "volcengine")
+    throw new Error("请在火山控制台上传音频并完成复刻，再填写已有音色 ID");
   const profile = ttsProfileSchema.parse(ttsProfile(settings));
   if (provider === "mimo") {
     if (!dataDirectory) throw new Error("MiMo 参考音色需要本机存储目录");
@@ -706,25 +718,6 @@ export async function createClonedVoice(
         65536,
       );
       minimaxSuccess(data);
-    } else {
-      voiceId = input.voiceId || "";
-      const data = await jsonResponse(
-        await request(
-          endpoint(profile.baseUrl, "voice_clone"),
-          jsonBody(
-            {
-              ...volcVoice(voiceId),
-              audio: { data: bytes.toString("base64"), format },
-              language: 0,
-            },
-            auth,
-          ),
-          signal,
-        ),
-        65536,
-      );
-      status = volcStatus(data);
-      profile.resourceId = "seed-icl-2.0";
     }
   }
   if (typeof voiceId !== "string" || !voiceId.trim() || voiceId.length > 512)
@@ -800,6 +793,8 @@ export async function createImportedVoice(
 ): Promise<ClonedVoice> {
   input = voiceImportInputSchema.parse(input);
   const { provider, audio } = input;
+  if (provider === "volcengine")
+    throw new Error("请在火山控制台上传音频并完成复刻，再填写已有音色 ID");
   const rules = voiceImportAudioRules(provider);
   const format = audio.name.toLowerCase().split(".").at(-1) || "";
   if (!rules.formats.includes(format))
@@ -845,8 +840,6 @@ export async function createImportedVoice(
       );
     clone.referenceText = data.text.trim();
   }
-  if (provider === "volcengine" && !clone.voiceId)
-    clone.voiceId = `Mai${randomUUID().replace(/-/g, "")}`;
   if (provider === "bailian") {
     const profile = ttsProfile(selected);
     selected.ttsProfiles.bailian = {

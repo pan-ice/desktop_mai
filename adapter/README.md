@@ -122,3 +122,7 @@ npm run dist:adapter
 | 未收到消息 ID 回执 | 桌宠是否已成功保存媒体和历史；是否断线或超出媒体限制             |
 
 进一步排查按[官方五段链路](https://docs.mai-mai.org/develop/adapters/debugging)检查日志、策略和出站路由。
+
+## 许可证
+
+本适配器源码采用 [MIT License](LICENSE)。MaiBot、`maim-message` 等第三方依赖保留各自的许可证。

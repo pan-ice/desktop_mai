@@ -505,55 +505,35 @@ globalThis.__packagedElectron.dialog = fixtureRequire("electron").dialog;
     for (const item of gate?.pending || []) item.send();
   };
 
-  hold("2");
   await reply("number-1", text("1"));
   await until(async () => (await played()).length === 1, "1 did not play");
   await reply("number-2", text("2"));
   await reply("number-3", text("3"));
-  await until(() => requestCount("2") === 1, "2 was not submitted");
   await finish();
   await until(
-    () => requestCount("3") === 1,
-    "3 was not submitted while 2 was pending",
-  );
-  await until(
-    () => requests.find((x) => x.text === "3")?.done,
-    "3 did not finish before 2",
-  );
-  assert.deepEqual(
-    await playLabels(),
-    ["1@mimo-clone"],
-    "3 must not overtake unresolved 2",
-  );
-  release("2");
-  await until(
     async () => (await played()).length >= 2,
-    "no playback after transient 2 response",
+    "No playback after temporary synthesis failure",
+    15000,
   );
-  await pause(100);
+  report.played = await playLabels();
+  assert.deepEqual(
+    report.played.slice(0, 2),
+    ["1@mimo-clone", "2@mimo-clone"],
+    "A temporary error must recover reply 2 before reply 3",
+  );
+  await finish();
+  await until(
+    async () => (await played()).length === 3,
+    "3 never follows recovered 2",
+    15000,
+  );
+  await finish();
   report.played = await playLabels();
   report.providerReplies = requests.map(({ text, index, status }) => ({
     text,
     index,
     status,
   }));
-  assert.deepEqual(
-    report.completion.slice(0, 3).map((item) => item.text),
-    ["1", "3", "2"],
-    "The fixture must exercise out-of-order synthesis completion",
-  );
-  assert.deepEqual(
-    report.played.slice(0, 2),
-    ["1@mimo-clone", "2@mimo-clone"],
-    `a transient ${transientStatus} must not silently skip reply 2 and play 3`,
-  );
-  await finish();
-  await until(
-    async () => (await played()).length === 3,
-    "3 never follows recovered 2",
-  );
-  await finish();
-  report.played = await playLabels();
   assert.deepEqual(report.played, [
     "1@mimo-clone",
     "2@mimo-clone",
@@ -562,12 +542,17 @@ globalThis.__packagedElectron.dialog = fixtureRequire("electron").dialog;
   assert.equal(
     requestCount("2"),
     2,
-    "reply 2 must recover with one foreground retry",
+    "Reply 2 must have one failed request and one successful recovery",
+  );
+  assert.deepEqual(
+    requests.filter((item) => item.text === "2").map((item) => item.status),
+    [transientStatus, 200],
   );
   assert.equal(requestCount("1"), 1);
   assert.equal(requestCount("3"), 1);
+  assert.deepEqual(report.errors, []);
   report.checks.push(
-    "MiMo synthesis finishes 1,3,2 with a transient failure of 2; foreground recovery preserves complete playback 1,2,3",
+    "MiMo temporary synthesis error recovers once and preserves complete playback 1,2,3 under serialized HTTP scheduling",
   );
   report.passed = true;
 } catch (error) {

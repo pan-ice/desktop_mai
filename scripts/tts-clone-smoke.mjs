@@ -183,7 +183,7 @@ async function launch() {
   await page.getByRole("button", { name: "声音与感知", exact: true }).click();
   return page;
 }
-const providers = ["siliconflow", "bailian", "minimax", "mimo", "volcengine"];
+const providers = ["siliconflow", "bailian", "minimax", "mimo"];
 try {
   const page = await launch();
   await page.evaluate(async (origin) => {
@@ -246,8 +246,6 @@ try {
         .setInputFiles(fixture);
     if (provider === "siliconflow")
       await page.getByLabel("参考音频原文").fill("这是参考音频对应的原文。");
-    if (provider === "volcengine")
-      await page.getByLabel("复刻音色 ID").fill("MaiSmokeVolc01");
     const requestsBeforeClone = requests.length;
     await page
       .getByRole("button", {
@@ -278,7 +276,7 @@ try {
       created.settings.ttsProfiles[provider].voice,
       created.clonedVoices.find((voice) => voice.provider === provider).voiceId,
     );
-    if (["bailian", "volcengine"].includes(provider)) {
+    if (provider === "bailian") {
       await page.getByRole("button", { name: "查询状态", exact: true }).click();
     }
     await page.getByRole("button", { name: "使用音色", exact: true }).click();
@@ -323,9 +321,7 @@ try {
         ? synth.body.voice_setting.voice_id
         : provider === "bailian"
           ? synth.body.input.voice
-          : provider === "volcengine"
-            ? synth.body.req_params.speaker
-            : synth.body.voice;
+          : synth.body.voice;
     if (provider === "mimo") {
       assert.equal(
         synth.body.audio.voice,
@@ -370,24 +366,7 @@ try {
       );
       naturalMimo = false;
     } else assert.equal(id, voices[provider].voiceId);
-    if (provider === "volcengine")
-      assert.equal(synth.headers["x-api-resource-id"], "seed-icl-2.0");
   }
-  // 同一火山音色重新训练时更新原记录，不能被旧 pending 状态挡住。
-  await page.getByRole("button", { name: "提交音色复刻", exact: true }).click();
-  await until(
-    async () =>
-      (await page.evaluate(() => window.mai.snapshot())).clonedVoices.find(
-        (voice) => voice.provider === "volcengine",
-      ).status === "pending",
-    "复刻重训状态未更新",
-  );
-  assert.equal(
-    (await page.evaluate(() => window.mai.snapshot())).clonedVoices.length,
-    providers.length,
-  );
-  await page.getByRole("button", { name: "查询状态", exact: true }).click();
-  await page.getByRole("button", { name: "使用音色", exact: true }).click();
   await page.screenshot({
     path: join(base, "voice-clone.png"),
     fullPage: true,
@@ -499,7 +478,7 @@ try {
     ),
   );
   console.log(
-    "五家在线合成、音色复刻、MiMo 原生 1 倍与可选语气 / 语速对比、长文分段、停止及持久化重启验证通过",
+    "四家在线合成、音色复刻、MiMo 原生 1 倍与可选语气 / 语速对比、长文分段、停止及持久化重启验证通过",
   );
 } finally {
   if (desktop) await desktop.close().catch(() => {});

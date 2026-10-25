@@ -16,6 +16,7 @@ import {
   BAILIAN_IMPORT_MODEL,
   ttsProfile,
   ttsProviders,
+  type ClonedVoice,
   type TtsProvider,
 } from "../shared/tts";
 import { speechSegments } from "../shared/speech-text";
@@ -701,28 +702,35 @@ describe("在线音色复刻", () => {
   });
 
   for (const voiceId of ["S_example01", "MaiCustom01"])
-    it(`火山训练和查询 ${voiceId}，采用复刻资源`, async () => {
-      respond = (req) => ({
-        data: { status: req.path.endsWith("get_voice") ? 2 : 1 },
-      });
-      const voice = await createClonedVoice(settings("volcengine"), "vc-key", {
+    it(`保留已有火山音色 ${voiceId} 的查询与合成`, async () => {
+      respond = () => ({ data: { status: 2 } });
+      const voice: ClonedVoice = {
+        id: "06969092-5cb3-4c48-a02d-c26cd2f52090",
+        provider: "volcengine",
         name: "麦麦",
         voiceId,
-        audio,
-      });
-      expect(voice.status).toBe("pending");
-      expect(voice.profile.resourceId).toBe("seed-icl-2.0");
+        profile: {
+          ...ttsProfile(settings("volcengine")),
+          voice: voiceId,
+          resourceId: "seed-icl-2.0",
+        },
+        status: "pending",
+        createdAt: 1,
+      };
       const identity = voiceId.startsWith("S_")
         ? { speaker_id: voiceId }
         : { speaker_id: "custom_speaker_id", custom_speaker_id: voiceId };
-      expect(requests[0].body).toEqual({
-        ...identity,
-        audio: { data: wav.toString("base64"), format: "wav" },
-        language: 0,
-      });
       expect((await queryClonedVoice(voice, "vc-key")).status).toBe("ready");
-      expect(requests[1].body).toEqual(identity);
-      expect(requests[1].headers["x-api-key"]).toBe("vc-key");
+      expect(requests[0].path).toBe("/volcengine/get_voice");
+      expect(requests[0].body).toEqual(identity);
+      expect(requests[0].headers["x-api-key"]).toBe("vc-key");
+      respond = (req) => synthesisResponse("volcengine", req);
+      const config = settings("volcengine");
+      config.ttsProfiles.volcengine = voice.profile;
+      await synthesizeTts(config, "vc-key", "已有音色试听");
+      expect(requests[1].path).toBe("/volcengine/unidirectional");
+      expect(requests[1].body.req_params.speaker).toBe(voiceId);
+      expect(requests[1].headers["x-api-resource-id"]).toBe("seed-icl-2.0");
     });
 
   it("缺少原文、音频、Key 和无效 ID 在请求前报错", async () => {
@@ -743,7 +751,7 @@ describe("在线音色复刻", () => {
       }),
     ).rejects.toThrow("音色 ID");
     await expect(
-      createClonedVoice(settings("volcengine"), "", { name: "麦麦", audio }),
+      createClonedVoice(settings("minimax"), "", { name: "麦麦", audio }),
     ).rejects.toThrow("API Key");
     await expect(
       createClonedVoice(settings("bailian"), "key", {
@@ -893,29 +901,26 @@ describe("简单音频导入", () => {
     expect(requests).toHaveLength(1);
   });
 
-  it("火山自动生成自定义编号，也可复用已购买的槽位", async () => {
-    respond = () => ({ data: { status: 1 } });
+  it("火山简单导入与高级复刻均在网络请求前拒绝，要求使用已有音色", async () => {
     const directory = await referenceDirectory();
-    const voice = await createImportedVoice(
-      settings("volcengine"),
-      "vc-key",
-      { provider: "volcengine", audio },
-      directory,
-    );
-    expect(voice.voiceId).toMatch(/^Mai[a-f0-9]{32}$/);
-    expect(voice.status).toBe("pending");
-    expect(requests[0].body).toMatchObject({
-      speaker_id: "custom_speaker_id",
-      custom_speaker_id: voice.voiceId,
-    });
-    await createImportedVoice(
-      settings("volcengine"),
-      "vc-key",
-      { provider: "volcengine", audio, voiceId: "S_purchased" },
-      directory,
-    );
-    expect(requests[1].body.speaker_id).toBe("S_purchased");
-    expect(requests[1].body.custom_speaker_id).toBeUndefined();
+    for (const voiceId of [undefined, "S_purchased", "MaiCustom01"]) {
+      await expect(
+        createImportedVoice(
+          settings("volcengine"),
+          "vc-key",
+          { provider: "volcengine", audio, voiceId },
+          directory,
+        ),
+      ).rejects.toThrow("请在火山控制台上传音频");
+      await expect(
+        createClonedVoice(settings("volcengine"), "vc-key", {
+          name: "麦麦",
+          voiceId,
+          audio,
+        }),
+      ).rejects.toThrow("请在火山控制台上传音频");
+    }
+    expect(requests).toHaveLength(0);
   });
 });
 

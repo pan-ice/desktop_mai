@@ -54,7 +54,7 @@ export function SensesPage({ state }: { state: Snapshot }) {
   const saveSpeech = () =>
     perform(async () => {
       if (key) {
-        await api.setCredential("speechKey", key);
+        if (key.trim()) await api.setCredential("speechKey", key.trim());
         setKey("");
       }
       await api.updateSettings({

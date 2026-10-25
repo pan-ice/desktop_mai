@@ -191,7 +191,13 @@ export interface SendInput {
   image?: string;
 }
 export type ApiResult<T> =
-  { ok: true; value: T } | { ok: false; error: string };
+  | { ok: true; value: T }
+  | { ok: false; error: string; errorKind?: "cancelled" | "tts_final" };
+
+export interface SynthesisOptions {
+  id: string;
+  priority: "foreground" | "prefetch";
+}
 
 export interface DesktopApi {
   snapshot(): Promise<Snapshot>;
@@ -231,7 +237,12 @@ export interface DesktopApi {
   screenSources(): Promise<ScreenSource[]>;
   captureScreen(sourceId: string): Promise<string>;
   transcribe(data: ArrayBuffer, mime: string): Promise<string>;
-  synthesize(text: string): Promise<string>;
+  synthesize(text: string, options?: SynthesisOptions): Promise<string>;
+  synthesizeResult(
+    text: string,
+    options: SynthesisOptions,
+  ): Promise<ApiResult<string>>;
+  cancelSynthesis(id: string): void;
   importVoice(input: VoiceImportInput): Promise<ClonedVoice>;
   cloneVoice(input: VoiceCloneInput): Promise<ClonedVoice>;
   queryVoice(id: string): Promise<ClonedVoice>;

@@ -1,8 +1,9 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.4.8",
+  "version": "0.4.10",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
+  "license": "MIT",
   "author": "Mai Desktop Contributors",
   "type": "module",
   "main": "out/main/index.js",
@@ -29,6 +30,7 @@
     "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
     "test:tts-buffer": "node scripts/tts-buffer-smoke.mjs",
     "test:tts-order": "node scripts/tts-order-smoke.mjs",
+    "test:tts-rate": "node scripts/tts-rate-smoke.mjs",
     "test:reply-delivery": "node scripts/reply-delivery-smoke.mjs",
     "test:interaction": "node scripts/interaction-smoke.mjs",
     "test:lifecycle": "node scripts/lifecycle-smoke.mjs",
@@ -37,6 +39,7 @@
     "test:chat-audio": "node scripts/chat-audio-smoke.mjs",
     "test:tts-clone": "node scripts/tts-clone-smoke.mjs",
     "test:voice-import": "node scripts/voice-import-smoke.mjs && node scripts/voice-import-providers-smoke.mjs",
+    "test:voice-key": "node scripts/voice-key-smoke.mjs",
     "test:window-scale": "node scripts/window-scale-smoke.mjs --dev && node scripts/window-scale-smoke.mjs",
     "test:pet-drag": "node scripts/pet-drag-smoke.mjs",
     "test:pet-click-through": "node scripts/pet-click-through-smoke.mjs",
@@ -95,7 +98,8 @@
     "files": [
       "out/**/*",
       "resources/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE"
     ],
     "asar": true,
     "electronFuses": {

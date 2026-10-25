@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { _electron as electron } from "playwright";
 
 const base = resolve(".cache/voice-import-providers-smoke");
@@ -89,16 +90,10 @@ const service = createServer(async (request, response) => {
         '{"file":{"file_id":9223372036854775806},"base_resp":{"status_code":0}}',
       );
     } else if (request.url.endsWith("voice_clone")) {
-      if (provider === "minimax") {
-        assert.match(body.voice_id, /^Mai[a-f0-9]{32}$/);
-        assert.ok(record.raw.includes('"file_id":9223372036854775806'));
-        send({ base_resp: { status_code: 0 } });
-      } else {
-        assert.equal(body.speaker_id, "custom_speaker_id");
-        assert.match(body.custom_speaker_id, /^Mai[a-f0-9]{32}$/);
-        assert.equal(body.audio.data, wav.toString("base64"));
-        send({ status: 1 });
-      }
+      assert.equal(provider, "minimax", "火山不得再提交音色复刻");
+      assert.match(body.voice_id, /^Mai[a-f0-9]{32}$/);
+      assert.ok(record.raw.includes('"file_id":9223372036854775806'));
+      send({ base_resp: { status_code: 0 } });
     } else if (request.url.endsWith("get_voice")) {
       if (failQuery) response.writeHead(503).end("temporary");
       else send({ status: volcStatus });
@@ -234,32 +229,67 @@ async function listen(page) {
     "试听未播放",
   );
 }
+// 用旧版存档验证已有训练任务的兼容性，不再通过上传创建火山音色。
+async function restoreLegacyTraining(name) {
+  await desktop.close();
+  desktop = undefined;
+  const disk = JSON.parse(await readFile(join(profile, "state.json"), "utf8"));
+  const voiceId = `Mai${randomUUID().replace(/-/g, "")}`;
+  disk.clonedVoices.push({
+    id: randomUUID(),
+    provider: "volcengine",
+    name,
+    voiceId,
+    profile: {
+      ...disk.settings.ttsProfiles.volcengine,
+      voice: voiceId,
+      resourceId: "seed-icl-2.0",
+    },
+    status: "pending",
+    autoUse: true,
+    createdAt: Date.now(),
+  });
+  await writeFile(join(profile, "state.json"), JSON.stringify(disk));
+  return launch();
+}
 try {
   let page = await launch();
   const voices = {};
   for (const provider of providers) {
     await page.getByLabel("音色服务", { exact: true }).selectOption(provider);
     const count = requests.length;
-    await upload(page, `${names[provider]}的声音`);
-    await page.locator(".voice-import-queued").waitFor();
-    assert.equal(
-      requests.length,
-      count,
-      "没有 Key 时应保留待导入文件，不上传其他服务",
-    );
-    await page
-      .getByLabel(`${names[provider]} API Key`, { exact: true })
-      .fill(`key-${provider}`);
-    await page
-      .getByRole("button", { name: "保存并导入音色", exact: true })
-      .click();
-    await until(
-      async () =>
-        (await snapshot(page)).clonedVoices.some(
-          (voice) => voice.provider === provider,
-        ),
-      `${provider} 未导入`,
-    );
+    if (provider === "volcengine") {
+      await page
+        .getByLabel("火山引擎 API Key", { exact: true })
+        .fill("key-volcengine");
+      await page.getByRole("button", { name: "保存 Key", exact: true }).click();
+      await until(
+        async () => (await snapshot(page)).credentials.ttsVolcengineKey,
+        "火山 Key 未保存",
+      );
+      page = await restoreLegacyTraining(`${names[provider]}的声音`);
+    } else {
+      await upload(page, `${names[provider]}的声音`);
+      await page.locator(".voice-import-queued").waitFor();
+      assert.equal(
+        requests.length,
+        count,
+        "没有 Key 时应保留待导入文件，不上传其他服务",
+      );
+      await page
+        .getByLabel(`${names[provider]} API Key`, { exact: true })
+        .fill(`key-${provider}`);
+      await page
+        .getByRole("button", { name: "保存并导入音色", exact: true })
+        .click();
+      await until(
+        async () =>
+          (await snapshot(page)).clonedVoices.some(
+            (voice) => voice.provider === provider,
+          ),
+        `${provider} 未导入`,
+      );
+    }
     voices[provider] = (await snapshot(page)).clonedVoices.find(
       (voice) => voice.provider === provider,
     );
@@ -308,6 +338,84 @@ try {
       .screenshot({ path: join(base, `${provider}.png`) });
   }
 
+  // 火山只填写已有 ID：保存不合成、不创建、不启用自动朗读，重启可继续用。
+  await page.getByLabel("音色服务", { exact: true }).selectOption("volcengine");
+  assert.equal(
+    await page.getByLabel("选择音色音频", { exact: true }).count(),
+    0,
+  );
+  assert.equal(await page.locator(".voice-clone-options").count(), 0);
+  assert.equal(
+    await page
+      .getByRole("link", { name: "打开火山上传指引" })
+      .getAttribute("href"),
+    "https://docs.volcengine.com/docs/DoubaoVoice/Soundreplicationorderingandusageguide?lang=zh",
+  );
+  const beforeManual = requests.length;
+  const beforeVoices = (await snapshot(page)).clonedVoices.length;
+  for (const voiceId of ["S_purchased01", "MaiConsoleVoice01"]) {
+    await page
+      .getByLabel("已有火山音色 ID", { exact: true })
+      .fill(`  ${voiceId}  `);
+    await page
+      .getByRole("button", { name: "保存火山音色", exact: true })
+      .click();
+    await until(
+      async () =>
+        (await snapshot(page)).settings.ttsProfiles.volcengine.voice ===
+        voiceId,
+      "已有火山音色 ID 未保存",
+    );
+    const saved = await snapshot(page);
+    assert.equal(saved.settings.voiceEnabled, false);
+    assert.equal(
+      saved.settings.ttsProfiles.volcengine.resourceId,
+      "seed-icl-2.0",
+    );
+    assert.equal(saved.clonedVoices.length, beforeVoices);
+    assert.equal(requests.length, beforeManual, "仅保存 ID 不应请求火山接口");
+  }
+  const blocked = await page.evaluate(
+    async (bytes) => {
+      const audio = {
+        name: "blocked.wav",
+        data: Uint8Array.from(bytes).buffer,
+      };
+      const failures = [];
+      for (const call of [
+        () => window.mai.importVoice({ provider: "volcengine", audio }),
+        () =>
+          window.mai.cloneVoice({
+            name: "禁止创建",
+            voiceId: "MaiBlocked01",
+            audio,
+          }),
+      ]) {
+        try {
+          await call();
+          failures.push("unexpected success");
+        } catch (error) {
+          failures.push(error.message);
+        }
+      }
+      return failures;
+    },
+    [...wav],
+  );
+  for (const failure of blocked)
+    assert.match(failure, /请在火山控制台上传音频/);
+  assert.equal(requests.length, beforeManual, "旧 IPC 入口不得上传火山音频");
+  await desktop.close();
+  desktop = undefined;
+  page = await launch();
+  assert.equal(
+    await page.getByLabel("已有火山音色 ID", { exact: true }).inputValue(),
+    "MaiConsoleVoice01",
+  );
+  assert.equal((await snapshot(page)).settings.voiceEnabled, false);
+  await listen(page);
+  assert.equal(requests.at(-1).body.req_params.speaker, "MaiConsoleVoice01");
+
   // 识别失败时保留当前音色，补充原文后点击重试即可完成。
   await page
     .getByLabel("音色服务", { exact: true })
@@ -329,8 +437,7 @@ try {
 
   // 手动选择其他声音后，较晚完成的训练不得覆盖用户的新选择。
   volcStatus = 1;
-  await page.getByLabel("音色服务", { exact: true }).selectOption("volcengine");
-  await upload(page, "不会覆盖新选择");
+  page = await restoreLegacyTraining("不会覆盖新选择");
   await until(
     async () =>
       (await snapshot(page)).clonedVoices.some(
@@ -367,8 +474,9 @@ try {
   );
 
   // 服务商拒绝训练时保留原音色，并显示可操作的失败提示。
+  volcStatus = 1;
+  page = await restoreLegacyTraining("训练未通过");
   await page.getByLabel("音色服务", { exact: true }).selectOption("volcengine");
-  await upload(page, "训练未通过");
   await until(
     async () =>
       (await snapshot(page)).clonedVoices.some(
@@ -385,7 +493,7 @@ try {
     "未自动发现训练失败",
   );
   await page
-    .getByText("「训练未通过」准备未通过，请换一段清晰的录音重新导入。", {
+    .getByText("「训练未通过」准备未通过，请前往火山控制台处理。", {
       exact: true,
     })
     .waitFor();
@@ -401,7 +509,7 @@ try {
   assert.ok(!JSON.stringify(disk).includes(wav.toString("base64")));
   assert.deepEqual(errors, []);
   console.log(
-    "其他四家简单导入、独立 Key、自动转写与编号、百炼本地文件、后台查询与重启续查、失败保留原音色验证通过",
+    "三家在线导入、火山已有 ID 保存与试听、禁止火山上传、旧任务后台查询与重启续查验证通过",
   );
 } finally {
   await desktop?.close().catch(() => {});
@@ -409,5 +517,7 @@ try {
     service.close(done);
     service.closeAllConnections();
   });
+  assert.equal(dirname(resolve(profile)), resolve(tmpdir()));
+  assert.ok(basename(profile).startsWith("mai-voice-providers-"));
   await rm(profile, { recursive: true, force: true });
 }

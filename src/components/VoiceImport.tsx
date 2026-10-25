@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, LoaderCircle, Upload } from "lucide-react";
+import { ArrowUpRight, Check, LoaderCircle, Upload } from "lucide-react";
 import { api, showToast } from "../api";
 import { stopSpeech } from "../hooks/useVoice";
 import {
@@ -12,7 +12,10 @@ import {
 import type { Settings, Snapshot } from "../../shared/types";
 import { Field } from "./ui";
 import { VoiceServiceGuidance } from "./ModelGuidance";
-import { voiceServiceGuides } from "../../shared/model-guidance";
+import {
+  modelGuideLinks,
+  voiceServiceGuides,
+} from "../../shared/model-guidance";
 import {
   analyzeVoiceReference,
   type VoiceReferenceReport,
@@ -75,14 +78,19 @@ export function VoiceImport({
   const [queuedFile, setQueuedFile] = useState<File | null>(null);
   const [referenceText, setReferenceText] = useState("");
   const [voiceId, setVoiceId] = useState("");
+  const savedVolcProfile = ttsProfile(state.settings, "volcengine");
+  const savedVolcVoice =
+    savedVolcProfile.resourceId === "seed-icl-2.0"
+      ? savedVolcProfile.voice
+      : "";
   useEffect(() => {
     setQueuedFile(null);
     setError("");
     setReferenceText("");
-    setVoiceId("");
+    setVoiceId(provider === "volcengine" ? savedVolcVoice : "");
     setReferenceReport(null);
     setReferenceCheckNote("");
-  }, [provider]);
+  }, [provider, savedVolcVoice]);
   const spec = ttsProviders[provider];
   const rules = voiceImportAudioRules(provider);
   const key = keys[provider] || "";
@@ -122,6 +130,7 @@ export function VoiceImport({
     }
   };
   const importFile = async (file: File) => {
+    if (provider === "volcengine") return;
     const format = file.name.toLowerCase().split(".").at(-1) || "";
     if (!rules.formats.includes(format)) {
       setError(
@@ -182,7 +191,6 @@ export function VoiceImport({
           ...(referenceText.trim()
             ? { referenceText: referenceText.trim() }
             : {}),
-          ...(voiceId.trim() ? { voiceId: voiceId.trim() } : {}),
         });
         setQueuedFile(null);
         if (voice.status === "failed")
@@ -224,71 +232,214 @@ export function VoiceImport({
           ))}
         </select>
       </Field>
-      <div
-        className={`voice-import ${dragging ? "dragging" : ""}`}
-        aria-busy={busy}
-        onDragOver={(event) => {
+      <form
+        className="voice-service-setup"
+        onSubmit={(event) => {
           event.preventDefault();
-          if (!busy && state.desktop) setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          if (busy || !state.desktop) return;
-          if (event.dataTransfer.files.length !== 1) {
-            setError("一次导入一段音频即可。");
+          if (!key.trim()) return;
+          if (queuedFile) {
+            void importFile(queuedFile);
             return;
           }
-          void importFile(event.dataTransfer.files[0]);
+          void run("正在保存…", async () => {
+            await api.setCredential(spec.key, key.trim());
+            if (selected && !connected && provider !== "volcengine")
+              await api.updateSettings({ voiceEnabled: true });
+            setKey("");
+            showToast(
+              connected
+                ? `${spec.name} API Key 已更新`
+                : provider === "volcengine"
+                  ? "API Key 已保存，请填写已在火山准备好的音色 ID"
+                  : selected
+                    ? "音色已启用，可以点击下方试听"
+                    : "已保存，接下来导入音色音频即可",
+            );
+          });
         }}
       >
-        <div className="voice-import-intro">
-          <span className="voice-import-icon">
-            <Upload size={22} />
-          </span>
-          <div>
-            <strong>用你喜欢的声音陪伴</strong>
-            <p>导入一段清晰的说话音频，准备完成后自动选用。</p>
-            <p>
-              建议 10–20
-              秒自然说话，只有一个人，无伴奏、混响或破音；唱歌、耳语和配乐片段会影响相似度与表达。
-            </p>
-          </div>
-        </div>
-        <input
-          ref={input}
-          type="file"
-          hidden
-          aria-label="选择音色音频"
-          accept={rules.formats.map((value) => `.${value}`).join(",")}
-          disabled={busy || !state.desktop}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (file) void importFile(file);
-          }}
-        />
-        <button
-          type="button"
-          className="button primary"
-          disabled={busy || !state.desktop}
-          onClick={() => input.current?.click()}
+        <Field
+          label={provider === "mimo" ? "MiMo API Key" : `${spec.name} API Key`}
+          hint={
+            provider === "volcengine"
+              ? "填写音色所属项目的豆包语音 API Key（非 AccessKey / Access Token），用于朗读。"
+              : "每家服务商单独保存 Key，音色导入与朗读共用，可随时更换。"
+          }
         >
-          {phase ? (
-            <LoaderCircle size={16} className="spin" />
-          ) : (
-            <Upload size={16} />
+          <input
+            aria-label={
+              provider === "mimo" ? "MiMo API Key" : `${spec.name} API Key`
+            }
+            type="password"
+            required
+            autoComplete="off"
+            value={key}
+            disabled={busy || !state.desktop}
+            placeholder={
+              connected
+                ? "已保存 · 输入新 Key 可替换"
+                : "填写当前服务商 API Key"
+            }
+            onChange={(event) => setKey(event.target.value)}
+          />
+        </Field>
+        <div className="voice-service-actions">
+          <button
+            type="submit"
+            className="button secondary"
+            disabled={busy || !state.desktop || !key.trim()}
+          >
+            {queuedFile
+              ? "保存并导入音色"
+              : connected
+                ? "更新 Key"
+                : selected && provider !== "volcengine"
+                  ? "保存并启用音色"
+                  : "保存 Key"}
+          </button>
+          {connected && (
+            <span className="voice-import-status" role="status">
+              <Check size={14} />
+              API Key 已保存
+            </span>
           )}
-          {phase || "导入音色音频"}
-        </button>
-        <small>
-          {state.desktop
-            ? `${rules.formats.map((value) => value.toUpperCase()).join(" / ")} · 小于约 ${(rules.maxBytes / 1_000_000).toFixed(1)} MB · 支持拖入`
-            : "请在桌面应用中导入音色音频"}
-        </small>
-      </div>
-      <VoiceServiceGuidance provider={provider} importing />
+        </div>
+      </form>
+      {provider === "volcengine" ? (
+        <form
+          className="voice-existing-setup"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!voiceId.trim()) return;
+            void run("正在保存音色…", async () => {
+              const apply = onBeforeApply?.();
+              const current = await api.snapshot();
+              stopSpeech();
+              const updated = await api.updateSettings({
+                ttsEngine: "api",
+                ttsProvider: "volcengine",
+                ttsProfiles: {
+                  ...current.settings.ttsProfiles,
+                  volcengine: {
+                    ...ttsProfile(current.settings, "volcengine"),
+                    voice: voiceId.trim(),
+                    resourceId: "seed-icl-2.0",
+                  },
+                },
+                voiceEnabled: false,
+              });
+              pendingApplication.current = null;
+              apply?.(updated.settings);
+              showToast("火山音色已保存，可手动试听或开启自动朗读");
+            });
+          }}
+        >
+          <p className="helper-text">
+            请先在火山官方控制台上传音频并完成复刻，确认效果和费用后，将音色 ID
+            填在这里。
+          </p>
+          <a
+            className="button secondary"
+            href={modelGuideLinks.volcengineClone}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            打开火山上传指引 <ArrowUpRight size={15} />
+          </a>
+          <Field
+            label="已有火山音色 ID"
+            hint="填写控制台中已准备好的复刻音色 ID，如 S_ 开头的槽位 ID。"
+          >
+            <input
+              aria-label="已有火山音色 ID"
+              required
+              maxLength={256}
+              value={voiceId}
+              disabled={busy || !state.desktop}
+              onChange={(event) => setVoiceId(event.target.value)}
+            />
+          </Field>
+          <button
+            type="submit"
+            className="button primary"
+            disabled={busy || !state.desktop || !voiceId.trim()}
+          >
+            保存火山音色
+          </button>
+          <p className="helper-text">
+            保存仅更新配置，自动朗读保持关闭。试听或开启朗读后按火山规则计费。
+          </p>
+        </form>
+      ) : (
+        <div
+          className={`voice-import ${dragging ? "dragging" : ""}`}
+          aria-busy={busy}
+          onDragOver={(event) => {
+            event.preventDefault();
+            if (!busy && state.desktop) setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            if (busy || !state.desktop) return;
+            if (event.dataTransfer.files.length !== 1) {
+              setError("一次导入一段音频即可。");
+              return;
+            }
+            void importFile(event.dataTransfer.files[0]);
+          }}
+        >
+          <div className="voice-import-intro">
+            <span className="voice-import-icon">
+              <Upload size={22} />
+            </span>
+            <div>
+              <strong>用你喜欢的声音陪伴</strong>
+              <p>导入一段清晰的说话音频，准备完成后自动选用。</p>
+              <p>
+                建议 10–20
+                秒自然说话，只有一个人，无伴奏、混响或破音；唱歌、耳语和配乐片段会影响相似度与表达。
+              </p>
+            </div>
+          </div>
+          <input
+            ref={input}
+            type="file"
+            hidden
+            aria-label="选择音色音频"
+            accept={rules.formats.map((value) => `.${value}`).join(",")}
+            disabled={busy || !state.desktop}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void importFile(file);
+            }}
+          />
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy || !state.desktop}
+            onClick={() => input.current?.click()}
+          >
+            {phase ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <Upload size={16} />
+            )}
+            {phase || "导入音色音频"}
+          </button>
+          <small>
+            {state.desktop
+              ? `${rules.formats.map((value) => value.toUpperCase()).join(" / ")} · 小于约 ${(rules.maxBytes / 1_000_000).toFixed(1)} MB · 支持拖入`
+              : "请在桌面应用中导入音色音频"}
+          </small>
+        </div>
+      )}
+      <VoiceServiceGuidance
+        provider={provider}
+        importing={provider !== "volcengine"}
+      />
       {(referenceReport || referenceCheckNote) && (
         <div className="voice-reference-advice" role="status">
           <strong>参考录音检查</strong>
@@ -326,37 +477,22 @@ export function VoiceImport({
           )}
         </div>
       )}
-      {(provider === "siliconflow" || provider === "volcengine") && (
+      {provider === "siliconflow" && (
         <details className="voice-import-extras">
           <summary>补充选项（通常无需填写）</summary>
-          {provider === "siliconflow" ? (
-            <Field
-              label="参考音频原文（可选）"
-              hint="留空会自动识别；识别不准确时可在这里补充。"
-            >
-              <textarea
-                aria-label="参考音频原文（可选）"
-                rows={2}
-                maxLength={4000}
-                value={referenceText}
-                disabled={busy}
-                onChange={(event) => setReferenceText(event.target.value)}
-              />
-            </Field>
-          ) : (
-            <Field
-              label="已有音色槽位（可选）"
-              hint="填写已购买的 S_ 槽位；留空自动创建自定义音色。"
-            >
-              <input
-                aria-label="已有音色槽位（可选）"
-                value={voiceId}
-                disabled={busy}
-                maxLength={256}
-                onChange={(event) => setVoiceId(event.target.value)}
-              />
-            </Field>
-          )}
+          <Field
+            label="参考音频原文（可选）"
+            hint="留空会自动识别；识别不准确时可在这里补充。"
+          >
+            <textarea
+              aria-label="参考音频原文（可选）"
+              rows={2}
+              maxLength={4000}
+              value={referenceText}
+              disabled={busy}
+              onChange={(event) => setReferenceText(event.target.value)}
+            />
+          </Field>
         </details>
       )}
       {voices.length > 0 && (
@@ -381,6 +517,7 @@ export function VoiceImport({
                     [voice.provider]: voice.profile,
                   },
                   voiceEnabled:
+                    voice.provider !== "volcengine" &&
                     current.credentials[ttsProviders[voice.provider].key],
                 });
                 pendingApplication.current = null;
@@ -433,7 +570,10 @@ export function VoiceImport({
       ))}
       {failed.map((voice) => (
         <p key={voice.id} className="voice-import-error">
-          「{voice.name}」准备未通过，请换一段清晰的录音重新导入。
+          「{voice.name}」准备未通过，
+          {provider === "volcengine"
+            ? "请前往火山控制台处理。"
+            : "请换一段清晰的录音重新导入。"}
         </p>
       ))}
       {selected && (
@@ -443,59 +583,6 @@ export function VoiceImport({
             ? `当前音色：${selected.name}${state.settings.voiceEnabled ? " · 已用于回复朗读" : " · 自动朗读已关闭"}`
             : "音色已导入，首次连接语音服务后即可朗读。"}
         </p>
-      )}
-      {!connected && (
-        <form
-          className="voice-service-setup"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (queuedFile) {
-              void importFile(queuedFile);
-              return;
-            }
-            void run("正在保存…", async () => {
-              await api.setCredential(spec.key, key.trim());
-              if (selected) await api.updateSettings({ voiceEnabled: true });
-              setKey("");
-              showToast(
-                selected
-                  ? "音色已启用，可以点击下方试听"
-                  : "已保存，接下来导入音色音频即可",
-              );
-            });
-          }}
-        >
-          <Field
-            label={
-              provider === "mimo" ? "MiMo API Key" : `${spec.name} API Key`
-            }
-            hint="每家服务首次填写一次，之后只需导入音频。"
-          >
-            <input
-              aria-label={
-                provider === "mimo" ? "MiMo API Key" : `${spec.name} API Key`
-              }
-              type="password"
-              required
-              autoComplete="off"
-              value={key}
-              disabled={busy || !state.desktop}
-              placeholder="首次使用，填写一次即可"
-              onChange={(event) => setKey(event.target.value)}
-            />
-          </Field>
-          <button
-            type="submit"
-            className="button secondary"
-            disabled={busy || !state.desktop || !key.trim()}
-          >
-            {queuedFile
-              ? "保存并导入音色"
-              : selected
-                ? "保存并启用音色"
-                : "保存 Key"}
-          </button>
-        </form>
       )}
     </div>
   );

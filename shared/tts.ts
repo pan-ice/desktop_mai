@@ -132,9 +132,9 @@ export const ttsProviders: Record<
   volcengine: {
     name: "火山引擎",
     key: "ttsVolcengineKey",
-    reference: "file",
+    reference: null,
     cloneHint:
-      "使用新版控制台 API Key。上传不超过 10 MB 的音频，填写已有 S_ 音色槽位或自定义 ID；复刻完成后查询状态。",
+      "请在火山控制台上传音频并完成复刻，再填写 API Key 和已有音色 ID。",
     defaults: {
       baseUrl: "https://openspeech.bytedance.com/api/v3/tts",
       model: "seed-tts-2.0-standard",

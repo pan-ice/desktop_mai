@@ -88,6 +88,19 @@ try {
     await link.click();
     await page.waitForTimeout(50);
     assert.equal((await opened()).at(-1), url, "官方说明应交给系统浏览器");
+    if (provider === "volcengine") {
+      const uploadGuide = section.getByRole("link", {
+        name: "打开火山上传指引",
+      });
+      const uploadUrl = await uploadGuide.getAttribute("href");
+      await uploadGuide.click();
+      await page.waitForTimeout(50);
+      assert.equal(
+        (await opened()).at(-1),
+        uploadUrl,
+        "火山上传指引应交给系统浏览器",
+      );
+    }
   }
 
   // 普通窗口仍不允许任意外链、本机程序或页面跳转。

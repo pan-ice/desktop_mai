@@ -67,6 +67,7 @@ export async function synthesizeAudio(
   key: string,
   text: string,
   dataDirectory?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  return synthesizeTts(settings, key, text, dataDirectory);
+  return synthesizeTts(settings, key, text, dataDirectory, signal);
 }

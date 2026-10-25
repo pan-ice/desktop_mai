@@ -8,7 +8,7 @@ export interface SynthesisResult {
 
 interface Dependencies {
   startedAt?: number;
-  synthesize(text: string): Promise<string>;
+  synthesize(text: string, signal?: AbortSignal): Promise<string>;
   play(
     text: string,
     settings: Settings,
@@ -22,6 +22,7 @@ interface Dependencies {
 interface Prepared {
   key: string;
   promise: Promise<SynthesisResult>;
+  controller: AbortController;
 }
 
 interface Entry {
@@ -87,7 +88,10 @@ export class ReplySpeechQueue {
     this.scope = scope;
     this.state = state;
     const key = synthesisKey(state.settings);
-    if (this.key !== key) this.background = undefined;
+    if (this.key !== key) {
+      for (const entry of this.entries) entry.prepared?.controller.abort();
+      this.background = undefined;
+    }
     this.key = key;
     const liveIds = new Set(state.liveReplies.map((reply) => reply.id));
     const history = new Map(
@@ -126,6 +130,9 @@ export class ReplySpeechQueue {
 
   clear(): void {
     ++this.epoch;
+    for (const entry of this.entries) entry.prepared?.controller.abort();
+    this.current?.prepared?.controller.abort();
+    this.background?.controller.abort();
     this.entries = [];
     this.background = undefined;
     const current = this.current;
@@ -216,7 +223,10 @@ export class ReplySpeechQueue {
       .filter((entry) => !entry.pending && !entry.dataUrl)
       .slice(0, size);
     for (const entry of this.entries)
-      if (entry.prepared?.key !== this.key) entry.prepared = undefined;
+      if (entry.prepared && entry.prepared.key !== this.key) {
+        entry.prepared.controller.abort();
+        entry.prepared = undefined;
+      }
     if (this.background || !settings) return;
     const next = candidates.find((entry) => !entry.prepared);
     if (!next) return;
@@ -224,14 +234,16 @@ export class ReplySpeechQueue {
       (text) => text.trim(),
     );
     if (!segment) return;
+    const controller = new AbortController();
     let response: Promise<string>;
     try {
-      response = this.dependencies.synthesize(segment);
+      response = this.dependencies.synthesize(segment, controller.signal);
     } catch (error) {
       response = Promise.reject(error);
     }
     const prepared: Prepared = {
       key: this.key,
+      controller,
       promise: response.then(
         (url) => ({ url }),
         (error: unknown) => ({ url: null, error }),

@@ -59,6 +59,8 @@ import {
 } from "../shared/live2d";
 import { inQuietHours, shouldReachOut } from "./companion";
 import { synthesizeAudio, transcribeAudio } from "./speech";
+import { TtsScheduler } from "./tts-scheduler";
+import { TtsHttpError } from "./tts-errors";
 import {
   createClonedVoice,
   createImportedVoice,
@@ -137,6 +139,7 @@ const certificateAuthority: CertificateAuthorityProvider = (url) =>
 const bridge = new MaiBotBridge(certificateAuthority);
 const accountClient = new AccountClient(certificateAuthority);
 const localServer = new LocalServer(process.env.MAI_PYTHON);
+const ttsScheduler = new TtsScheduler();
 let qqLogin: { server: string; proof: LoginProof } | null = null;
 let historyEpoch = 0;
 // Reconnecting restarts history sync, while accepted replies retain delivery
@@ -376,6 +379,18 @@ function ttsCredential(settings = store.state.settings) {
     return credential("speechKey");
   return "";
 }
+
+function synthesisConfiguration(settings: Settings) {
+  return JSON.stringify([
+    settings.ttsEngine,
+    settings.ttsProvider,
+    ttsProfile(settings),
+    settings.ttsNativeOutput,
+    settings.ttsNaturalSpeech,
+    settings.ttsCloneFidelity,
+    settings.speechRate,
+  ]);
+}
 let cloningVoice = false;
 let voiceSelectionEpoch = 0;
 let voiceStatusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -523,8 +538,10 @@ function stopPlayback() {
   const id = store.state.playback.id;
   playbackOwner = null;
   for (const window of [dashboard, pet])
-    if (window && !window.isDestroyed())
+    if (window && !window.isDestroyed()) {
+      ttsScheduler.cancelOwner(window.webContents.id);
       window.webContents.send("mai:stop-playback", id);
+    }
   publishPlayback({ ...idlePlayback });
 }
 
@@ -544,6 +561,7 @@ function loadWindow(window: BrowserWindow, view: string) {
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   const resetActivity = () => {
+    ttsScheduler.cancelOwner(window.webContents.id);
     if (playbackOwner === window.webContents.id) stopPlayback();
     if (voiceInputOwner === window.webContents.id) {
       voiceInputOwner = null;
@@ -554,6 +572,10 @@ function loadWindow(window: BrowserWindow, view: string) {
   };
   window.webContents.on("did-start-loading", resetActivity);
   window.webContents.on("render-process-gone", resetActivity);
+  const synthesisOwner = window.webContents.id;
+  window.webContents.once("destroyed", () =>
+    ttsScheduler.cancelOwner(synthesisOwner),
+  );
   const origin = developmentRendererUrl(
     app.isPackaged,
     process.env.ELECTRON_RENDERER_URL,
@@ -1663,7 +1685,9 @@ async function commands(
       );
     }
     case "synthesize": {
-      const selected = store.state.settings;
+      if (!window || window.isDestroyed())
+        throw new DOMException("语音合成已取消", "AbortError");
+      const selected = structuredClone(store.state.settings);
       const cloned = store.state.clonedVoices.find(
         (voice) =>
           voice.provider === selected.ttsProvider &&
@@ -1678,12 +1702,39 @@ async function commands(
         throw new Error(
           "当前复刻音色尚未就绪或模型不匹配，请查询状态或重新选择音色",
         );
-      return synthesizeAudio(
-        selected,
-        ttsCredential(),
-        z.string().min(1).max(12000).parse(args[0]),
-        store.directory,
-      );
+      const text = z.string().min(1).max(12000).parse(args[0]);
+      const options = z
+        .object({
+          id: z.string().uuid(),
+          priority: z.enum(["foreground", "prefetch"]),
+        })
+        .strict()
+        .optional()
+        .parse(args[1]);
+      const key = ttsCredential(selected);
+      const configuration = synthesisConfiguration(selected);
+      const profile = ttsProfile(selected);
+      return ttsScheduler.schedule({
+        lane: JSON.stringify([
+          selected.ttsProvider,
+          new URL(profile.baseUrl).origin,
+          profile.model,
+        ]),
+        owner: window.webContents.id,
+        id: options?.id ?? randomUUID(),
+        priority: options?.priority ?? "foreground",
+        concurrency: selected.ttsProvider === "mimo" ? 1 : 2,
+        minIntervalMs: selected.ttsProvider === "mimo" ? 700 : 0,
+        run: (signal) => {
+          signal.throwIfAborted();
+          if (
+            configuration !== synthesisConfiguration(store.state.settings) ||
+            key !== ttsCredential()
+          )
+            throw new DOMException("语音合成已取消", "AbortError");
+          return synthesizeAudio(selected, key, text, store.directory, signal);
+        },
+      });
     }
     case "importVoice":
     case "cloneVoice": {
@@ -1834,6 +1885,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
+  ttsScheduler.dispose();
   if (scheduler) clearInterval(scheduler);
   if (voiceStatusTimer) clearTimeout(voiceStatusTimer);
   voiceStatusAbort.abort();
@@ -1955,11 +2007,30 @@ void app
               : error instanceof Error
                 ? error.message
                 : String(error);
-          activity(message, "error");
-          return { ok: false, error: message };
+          const errorKind: "cancelled" | "tts_final" | undefined =
+            command === "synthesize" &&
+            error instanceof Error &&
+            error.name === "AbortError"
+              ? "cancelled"
+              : command === "synthesize" &&
+                  error instanceof TtsHttpError &&
+                  [401, 402, 403, 429].includes(error.status)
+                ? "tts_final"
+                : undefined;
+          if (errorKind !== "cancelled") activity(message, "error");
+          return { ok: false, error: message, errorKind };
         }
       },
     );
+    ipcMain.on("mai:cancel-synthesis", (event, raw: unknown) => {
+      if (
+        !trusted(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame
+      )
+        return;
+      const id = z.string().uuid().safeParse(raw);
+      if (id.success) ttsScheduler.cancel(event.sender.id, id.data);
+    });
     ipcMain.on("mai:drag", (event, action: unknown) => {
       if (event.sender.id !== pet?.webContents.id || !pet) return;
       if (store.state.settings.petPositionLocked) {
@@ -1989,10 +2060,13 @@ void app
       if (!parsed.success) return;
       const report = parsed.data;
       if (report.type === "start") {
-        if (playbackOwner !== null && store.state.playback.id)
+        if (playbackOwner !== null && store.state.playback.id) {
+          if (playbackOwner !== event.sender.id)
+            ttsScheduler.cancelOwner(playbackOwner);
           [dashboard, pet]
             .find((window) => window?.webContents.id === playbackOwner)
             ?.webContents.send("mai:stop-playback", store.state.playback.id);
+        }
         playbackOwner = event.sender.id;
         publishPlayback({ id: report.id, phase: "preparing", mouth: 0 });
       } else if (

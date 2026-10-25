@@ -7,7 +7,12 @@ async function invoke<T>(command: string, ...args: unknown[]): Promise<T> {
     command,
     ...args,
   )) as ApiResult<T>;
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) {
+    const error = new Error(result.error);
+    if (result.errorKind === "cancelled") error.name = "AbortError";
+    if (result.errorKind === "tts_final") error.name = "TtsFinalError";
+    throw error;
+  }
   return result.value;
 }
 
@@ -64,7 +69,10 @@ const api: DesktopApi = {
   screenSources: () => invoke("screenSources"),
   captureScreen: (id) => invoke("captureScreen", id),
   transcribe: (data, mime) => invoke("transcribe", data, mime),
-  synthesize: (text) => invoke("synthesize", text),
+  synthesize: (text, options) => invoke("synthesize", text, options),
+  synthesizeResult: (text, options) =>
+    ipcRenderer.invoke("mai:command", "synthesize", text, options),
+  cancelSynthesis: (id) => ipcRenderer.send("mai:cancel-synthesis", id),
   importVoice: (audio) => invoke("importVoice", audio),
   cloneVoice: (input) => invoke("cloneVoice", input),
   queryVoice: (id) => invoke("queryVoice", id),

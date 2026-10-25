@@ -1378,9 +1378,25 @@ kbd {
 }
 .voice-service-setup {
   padding: 16px;
-  margin-top: 14px;
+  margin: 14px 0 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
+}
+.voice-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.voice-existing-setup {
+  padding: 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f2f5eb;
+}
+.voice-existing-setup > .button {
+  margin-bottom: 12px;
 }
 .tts-advanced {
   margin: 6px 0 20px;

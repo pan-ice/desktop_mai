@@ -86,6 +86,8 @@ function previewApi(): DesktopApi {
     captureScreen: unsupported,
     transcribe: unsupported,
     synthesize: unsupported,
+    synthesizeResult: unsupported,
+    cancelSynthesis: () => {},
     importVoice: unsupported,
     cloneVoice: unsupported,
     queryVoice: unsupported,
