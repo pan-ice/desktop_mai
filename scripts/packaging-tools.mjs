@@ -107,7 +107,7 @@ async function prepareArtifact(key, sevenZip, allowDownload) {
   if (!found) {
     if (!allowDownload)
       throw new Error(
-        `缺少已校验的 ${artifact.release}。允许下载官方构建工具后重试；--zip 可显式选择 ZIP，不会生成 Portable EXE。`,
+        `缺少已校验的 ${artifact.release}。允许下载官方构建工具后重试；--zip 可显式选择 ZIP，不会生成安装版或便携版 EXE。`,
       );
     const url = `https://github.com/electron-userland/electron-builder-binaries/releases/download/${artifact.release}/${artifact.filename}`;
     console.log(`下载官方构建工具：${artifact.release}`);
@@ -133,7 +133,7 @@ async function prepareArtifact(key, sevenZip, allowDownload) {
 }
 
 export async function windowsPackagingTools({
-  portable = true,
+  nsis = true,
   allowDownload = true,
 } = {}) {
   if (process.platform !== "win32")
@@ -145,7 +145,7 @@ export async function windowsPackagingTools({
       artifacts.sevenZip.entry,
     );
   const env = { ...process.env, ELECTRON_BUILDER_7ZIP_PATH: sevenZip };
-  if (portable) {
+  if (nsis) {
     env.ELECTRON_BUILDER_NSIS_DIR =
       (await explicitPath("ELECTRON_BUILDER_NSIS_DIR", true)) ||
       (await prepareArtifact("nsis", sevenZip, allowDownload));
@@ -157,13 +157,13 @@ export async function windowsPackagingTools({
       !(await exists(join(compiler, "Bin/makensis.exe"))) &&
       !(await exists(join(compiler, "makensis.cmd")))
     )
-      throw new Error("NSIS 目录缺少编译器，无法生成 Portable EXE");
+      throw new Error("NSIS 目录缺少编译器，无法生成安装版或便携版 EXE");
     const resources = env.ELECTRON_BUILDER_NSIS_RESOURCES_DIR;
     if (
       !(await exists(join(resources, "plugins/x86-unicode"))) &&
       !(await exists(join(resources, "windows/Plugins/x86-unicode")))
     )
-      throw new Error("缺少 NSIS Unicode 插件资源，无法生成 Portable EXE");
+      throw new Error("缺少 NSIS Unicode 插件资源，无法生成安装版或便携版 EXE");
   }
   return env;
 }

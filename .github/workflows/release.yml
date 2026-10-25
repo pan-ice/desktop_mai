@@ -78,7 +78,7 @@ jobs:
           npm run test:message-adapter
           npm run dist:adapter
       - run: npm run build
-      - name: Windows 便携版
+      - name: Windows 安装版和便携版
         if: matrix.platform == 'win'
         run: node scripts/package-win.mjs
       - name: macOS DMG 和 ZIP
@@ -96,6 +96,10 @@ jobs:
       - name: Windows 便携入口验收
         if: matrix.platform == 'win'
         run: npm run test:portable
+      - name: Windows 安装、运行与卸载验收
+        if: matrix.platform == 'win'
+        timeout-minutes: 8
+        run: npm run test:installer
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}

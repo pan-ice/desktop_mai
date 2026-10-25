@@ -21,7 +21,7 @@
 
 ## 版本与升级
 
-- 桌宠版本 `0.4.10`，独立消息适配器版本 `0.1.1`；原网关插件按自身版本同步更新。桌宠会话协议 `1`，服务器多路通道协议 `2`，账号 RPC 协议 `1`，桌宠数据版本 `2`，本机插件配置版本 `1.0.0`、服务器配置版本 `1.1.0`。v2 本地设置新增可选服务器账号选择，旧记录与凭证继续兼容。QQ 登录与历史同步需要客户端、插件、接入程序一起更新。
+- 桌宠版本 `0.4.11`，独立消息适配器版本 `0.1.1`；原网关插件按自身版本同步更新。桌宠会话协议 `1`，服务器多路通道协议 `2`，账号 RPC 协议 `1`，桌宠数据版本 `2`，本机插件配置版本 `1.0.0`、服务器配置版本 `1.1.0`。v2 本地设置新增可选服务器账号选择，旧记录与凭证继续兼容。QQ 登录与历史同步需要客户端、插件、接入程序一起更新。
 - 自动名字为可选协议扩展：本机 WebSocket Upgrade 响应使用 `X-Mai-Desktop-Features: bot-name`，独立适配器仅在协商成功后向回复附 `botName`。网关插件与中继 0.4.6 支持相同扩展，插件经公开 SDK `config.get('bot.nickname')` 在就绪时提供名字。新版客户端接受 `ready`／`reply` 的可选名字，其他帧结构与旧 `welcome` 保持兼容。运行时名称跟随活动连接，断开清空，不持久写入手动 `nickname`。旧设置缺少 `followBotName` 时保留手动模式；服务器桌宠账号名独立于内核昵称。
 - 只有通过 `hello → welcome → SDK ready/open_session → ready` 才显示已连接。消息发送成功表示 Host 接收；没有回复不代表失败，MaiBot 会自行决定回复。
 - 桌宠状态 v1 首次加载先逐字节备份，再移除旧 URL / 令牌并保存为 v2。未知版本显式失败，不能重置覆盖。回滚旧应用前恢复备份；不要直接用旧版本读 v2。
@@ -43,7 +43,7 @@ CI 配置位于各自 `.github/workflows`，推送后由 GitHub Actions 执行�
 
 ## 发布
 
-GitHub 下载包由 `.github/workflows/release.yml` 生成，包含 Windows x64 Portable EXE、Mac Intel / Apple Silicon 的 DMG 与 ZIP、独立消息适配器 ZIP 和 `SHA256SUMS.txt`。三个平台使用各自原生 runner 执行单元测试、构建、ASAR / 图标 / 版本 / 架构核对、实际应用交互与重启验收；Windows 额外验收独立适配器和便携启动器。全部通过才发布，失败时不会公开半成品。
+GitHub 下载包由 `.github/workflows/release.yml` 生成，包含 Windows x64 Setup 安装版和 Portable 便携版 EXE、Mac Intel / Apple Silicon 的 DMG 与 ZIP、独立消息适配器 ZIP 和 `SHA256SUMS.txt`。三个平台使用各自原生 runner 执行单元测试、构建、ASAR / 图标 / 版本 / 架构核对、实际应用交互与重启验收；Windows 额外验收独立适配器、便携启动器以及安装版的真实安装、快捷方式、覆盖安装、运行和卸载。全部通过才发布，失败时不会公开半成品。
 
 发布前同步 `package.json`、`package-lock.json` 和文档中的版本并推送 main。在 Actions →“桌宠发行包”→ Run workflow 中选择 main、勾选 `publish`，会在本次构建的提交上创建 `v版本号` 标签并发布 Release。不勾选时只提供保留 14 天的 Actions artifacts。也可以推送与 package.json 一致的 `v版本号` 标签触发发布。已经公开的 Release 不会覆盖，应提升版本号重新发布；未公开的草稿可重跑补齐。工作流只在发布任务使用仓库自带的 `GITHUB_TOKEN` 写入 Release，无需额外 PAT。
 
@@ -72,7 +72,9 @@ npm run test:portable
 
 `npm run dev`／`npm run dev:web` 由系统动态分配客户端开发服务端口，窗口地址、CSP 和热更新使用实际监听结果；Vite 服务重启复用当前端口，新进程重新分配。`npm start` 和 `启动桌宠.cmd` 共用完整构建检查，源码变化、开发输出覆盖或页面/资源缺失时会重新构建。正式包固定加载包内页面，不启动开发网页服务。启动失败会报告原因并退出，不能把空白窗口视为启动成功。
 
-Windows 打包使用已安装且版本匹配的 Electron，以及按固定 SHA-256 校验的官方 7-Zip / NSIS 工具；项目缓存可在之后离线复用。默认仍生成 Portable EXE。仅需核对工具时运行 `node scripts/package-win.mjs --check`；缓存齐全后可加 `--offline` 禁止下载。构建不会自动发布，也不读取本机签名凭证。
+Windows 打包使用已安装且版本匹配的 Electron，以及按固定 SHA-256 校验的官方 7-Zip / NSIS 工具；项目缓存可在之后离线复用。默认同时生成 Setup 安装版与 Portable 便携版；可传 `--installer` / `--portable` / `--zip` 单独选择。仅需核对工具时运行 `node scripts/package-win.mjs --check`；缓存齐全后可加 `--offline` 禁止下载。构建不会自动发布，也不读取本机签名凭证。
+
+Setup 使用 NSIS 安装向导，默认当前用户安装，可选择目录，创建桌面和开始菜单快捷方式，并注册系统卸载入口。保持 `appId` 稳定，以便后续覆盖安装。安装完成不自动启动，卸载默认保留应用数据。`npm run test:installer` 仅允许在一次性的 GitHub Actions Windows runner 中执行：安装到工作区下随机目录，验证安装文件、版本、快捷方式与卸载注册项，覆盖安装并运行实际客户端，最后卸载并确认保留用户数据；测试拒绝接管已有安装或快捷方式。
 
 最后用 `MAI_TEST_EXE` 指定 `release/win-unpacked/Mai 桌面伙伴.exe` 再运行桌面验收；`npm run test:portable` 验证最终自解压入口，`npm run verify:release` 核对 ASAR。不要直接将便携启动器交给 Playwright 的 Electron 调试管道，它不转发该管道。插件源码包由 `tools/package.py` 白名单生成；从解压后的包再运行测试可发现遗漏文件。生成并保存两个发行文件的 SHA256。
 

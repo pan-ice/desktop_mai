@@ -20,6 +20,7 @@ if (process.env.GITHUB_REF_TYPE === "tag")
 const directory = resolve("release-assets");
 const desktop = `Mai-Desktop-Pet-${version}`;
 const assets = [
+  `${desktop}-win-x64-Setup.exe`,
   `${desktop}-win-x64.exe`,
   `${desktop}-mac-x64.dmg`,
   `${desktop}-mac-x64.zip`,
@@ -104,7 +105,8 @@ const notes = `Mai 桌面伙伴 ${tag}，客户端与独立适配器采用 MIT �
 
 | 系统 | 下载文件 | 使用方式 |
 | --- | --- | --- |
-| Windows x64 | \`${desktop}-win-x64.exe\` | 便携版，直接运行 |
+| Windows x64 安装版（推荐） | \`${desktop}-win-x64-Setup.exe\` | 安装向导，可选择目录，创建桌面及开始菜单快捷方式，支持卸载 |
+| Windows x64 便携版 | \`${desktop}-win-x64.exe\` | 无需安装，直接运行 |
 | Mac Apple Silicon（M 系列） | \`${desktop}-mac-arm64.dmg\` | 打开后拖入 Applications |
 | Mac Intel | \`${desktop}-mac-x64.dmg\` | 打开后拖入 Applications |
 
@@ -112,7 +114,9 @@ Mac 同时提供 ZIP，解压后将 .app 移入 Applications。Mac 包使用 ad-
 
 独立适配器为 \`MaiBot-Desktop-Message-Adapter-${adapterVersion}.zip\`，需要 Python 3.11+，配置方法见包内 README。桌宠客户端无需安装 Node.js。内核、模型和 API 凭证由使用者自行配置。
 
-所有下载文件的校验值见 \`SHA256SUMS.txt\`。三个平台均经过单元测试、发行内容核对和实际应用启动、交互与重启验收；Windows 另验收便携启动器。
+Windows 安装版默认安装到当前用户，可在向导中选择安装目录；可通过系统“已安装的应用”卸载，默认保留个人设置和聊天数据。便携版用户可直接改用安装版。
+
+所有下载文件的校验值见 \`SHA256SUMS.txt\`。三个平台均经过单元测试、发行内容核对和实际应用启动、交互与重启验收；Windows 另验收便携启动器、安装向导生成的实际安装程序、自定义目录安装、快捷方式、覆盖安装和卸载。
 
 构建提交：\`${process.env.GITHUB_SHA}\`。
 `;

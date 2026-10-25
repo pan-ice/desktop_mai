@@ -1,6 +1,6 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
   "license": "MIT",
@@ -51,6 +51,7 @@
     "test:qq-login": "node scripts/qq-login-smoke.mjs",
     "test:local-server": "node scripts/local-server-smoke.mjs",
     "test:portable": "node scripts/portable-smoke.mjs",
+    "test:installer": "pwsh -NoProfile -File scripts/installer-smoke.ps1",
     "verify:release": "node scripts/verify-release.mjs",
     "format": "prettier --write electron shared src tests scripts *.ts package.json tsconfig.json index.html",
     "dist:adapter": "node scripts/package-message-adapter.mjs",
@@ -110,6 +111,12 @@
       "icon": "resources/icon.ico",
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "portable",
           "arch": [
             "x64"
@@ -119,6 +126,22 @@
     },
     "portable": {
       "artifactName": "Mai-Desktop-Pet-${version}-win-x64.exe"
+    },
+    "nsis": {
+      "artifactName": "Mai-Desktop-Pet-${version}-win-x64-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "selectPerMachineByDefault": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mai 桌面伙伴",
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ]
     },
     "mac": {
       "icon": "resources/icon.svg",

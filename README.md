@@ -21,13 +21,16 @@ MaiBot 由部署方独立安装，客户端仓库不包含 `MaiBot/`。仅在需
 
 直接使用请前往 [GitHub Releases](https://github.com/pan-ice/desktop_mai/releases/latest) 下载，无需安装 Node.js：
 
-| 系统                        | 文件                                 | 使用方式                |
-| --------------------------- | ------------------------------------ | ----------------------- |
-| Windows x64                 | `Mai-Desktop-Pet-版本-win-x64.exe`   | 便携版，直接运行        |
-| Mac Apple Silicon（M 系列） | `Mai-Desktop-Pet-版本-mac-arm64.dmg` | 打开后拖入 Applications |
-| Mac Intel                   | `Mai-Desktop-Pet-版本-mac-x64.dmg`   | 打开后拖入 Applications |
+| 系统                        | 文件                                     | 使用方式                             |
+| --------------------------- | ---------------------------------------- | ------------------------------------ |
+| Windows x64 安装版（推荐）  | `Mai-Desktop-Pet-版本-win-x64-Setup.exe` | 安装向导，可选目录，含快捷方式和卸载 |
+| Windows x64 便携版          | `Mai-Desktop-Pet-版本-win-x64.exe`       | 无需安装，直接运行                   |
+| Mac Apple Silicon（M 系列） | `Mai-Desktop-Pet-版本-mac-arm64.dmg`     | 打开后拖入 Applications              |
+| Mac Intel                   | `Mai-Desktop-Pet-版本-mac-x64.dmg`       | 打开后拖入 Applications              |
 
 Mac 另提供 ZIP，解压后将 `.app` 移入 Applications。Mac 包使用 ad-hoc 签名，尚无 Apple Developer ID 签名或公证；首次打开若被系统拦截，可在“系统设置 → 隐私与安全性”中允许打开。Windows 包也未使用商业代码签名。每个 Release 附带 `SHA256SUMS.txt` 与独立适配器 ZIP。
+
+Windows 安装版默认安装到当前用户，可选择安装目录，创建桌面和开始菜单快捷方式；卸载入口位于系统“已安装的应用”。默认保留个人设置和聊天数据。此前使用便携版的用户可以改用安装版。
 
 以下命令用于从源码开发、构建：
 
@@ -49,15 +52,15 @@ npm start
 
 `npm start` 会检查源码与完整的主进程、preload、页面及资源产物；缺失、过期或被开发模式覆盖时会先重新构建。可单独运行 `npm run build` 提前构建。正式发行包使用自身页面，忽略开发页面地址。
 
-Windows 便携版构建：
+Windows 安装版和便携版构建：
 
 ```powershell
 npm run dist:win
 ```
 
-生成 `release/Mai-Desktop-Pet-0.4.10-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
+生成安装版 `release/Mai-Desktop-Pet-0.4.11-win-x64-Setup.exe`、便携版 `release/Mai-Desktop-Pet-0.4.11-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。已构建页面时，可用 `node scripts/package-win.mjs --installer` 或 `--portable` 只生成对应版本。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
 
-macOS 在 Mac 上执行 `npm run dist:mac`，按当前 Node.js 架构生成 `release/Mai-Desktop-Pet-0.4.10-mac-arm64.dmg` / `mac-x64.dmg` 及同名 ZIP。GitHub Actions 的“桌宠发行包”同时构建 Windows x64、Mac Intel 和 Apple Silicon，全部验收通过后发布 Release；维护方式见[维护指南](docs/maintenance.md#发布)。
+macOS 在 Mac 上执行 `npm run dist:mac`，按当前 Node.js 架构生成 `release/Mai-Desktop-Pet-0.4.11-mac-arm64.dmg` / `mac-x64.dmg` 及同名 ZIP。GitHub Actions 的“桌宠发行包”同时构建 Windows x64、Mac Intel 和 Apple Silicon，全部验收通过后发布 Release；维护方式见[维护指南](docs/maintenance.md#发布)。
 
 ## 官方消息协议接入
 
