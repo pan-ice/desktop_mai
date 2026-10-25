@@ -168,17 +168,27 @@ export async function speak(
     };
     try {
       if (dataUrl || settings.ttsEngine === "api") {
-        const result = dataUrl
+        const prefetched = prepared;
+        let result = dataUrl
           ? { url: dataUrl, error: undefined }
           : await Promise.race([
-              prepared || synthesize(segment),
+              prefetched || synthesize(segment),
               ended.then(() => null),
             ]);
         prepared = undefined;
         if (generation !== playbackGeneration || !result) return;
+        // Prefetch is optional work: a temporary failure must not consume the
+        // reply's place. Retry once when this segment reaches the foreground.
+        if (!dataUrl && prefetched && (result.error || !result.url)) {
+          result = await Promise.race([
+            synthesize(segment),
+            ended.then(() => null),
+          ]);
+          if (generation !== playbackGeneration || !result) return;
+        }
         if (result.error) throw result.error;
         const url = result.url;
-        if (generation !== playbackGeneration || !url) return;
+        if (!url) throw new Error("语音合成未返回有效音频");
         const audio = new Audio(url);
         audio.crossOrigin = "anonymous";
         currentAudio = audio;

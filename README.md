@@ -43,7 +43,7 @@ Windows 便携版构建：
 npm run dist:win
 ```
 
-生成 `release/Mai-Desktop-Pet-0.4.7-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
+生成 `release/Mai-Desktop-Pet-0.4.8-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
 
 ## 官方消息协议接入
 
@@ -172,6 +172,8 @@ Live2D、VRM / MMD、PNGTuber 与默认角色的口型跟随正在播放的实�
 
 使用 API 朗读时，可在「声音设置」调整「预缓冲文字条数」：默认提前准备后续 2 条文字回复的开头，支持 0～5 条，0 关闭跨消息预缓冲。播放保持消息到达顺序，MaiBot 原始语音在原位置播放，不会额外合成同一条消息的文字；长回复内部的预合成仍由「长回复连续播放」独立控制。停止、专注或切换会话会清理待播队列，切换音色后后续文字使用新音色；已提交的合成请求仍可能产生费用。
 
+预合成临时失败时，轮到对应消息或分段会重新合成一次，后文等待它完成；再次失败会显示错误，不无限重试。停止或取消后，迟到结果不会触发重试或恢复旧朗读。
+
 ## 数据与开发
 
 默认数据目录：`%APPDATA%\Mai Desktop Pet`，可在「偏好设置」中打开。开发测试使用 `MAI_USER_DATA` 指定隔离目录。
@@ -209,6 +211,8 @@ npm run test:pet-bubble -- --mode=packaged
 npm run test:tts-buffer
 npm run test:tts-buffer -- --mode=dev --phase=dev
 npm run test:tts-buffer -- --mode=packaged
+npm run test:tts-order
+npm run test:reply-delivery
 npm run test:startup
 npm run test:runtime -- --mode=dev
 npm run test:runtime -- --mode=build

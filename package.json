@@ -1,6 +1,6 @@
 {
   "name": "mai-desktop-pet",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "以 MaiBot 为内核的桌面伙伴",
   "private": true,
   "author": "Mai Desktop Contributors",
@@ -28,6 +28,8 @@
     "test:pet-bubble": "node scripts/pet-bubble-smoke.mjs",
     "test:voice-replies": "node scripts/voice-replies-smoke.mjs",
     "test:tts-buffer": "node scripts/tts-buffer-smoke.mjs",
+    "test:tts-order": "node scripts/tts-order-smoke.mjs",
+    "test:reply-delivery": "node scripts/reply-delivery-smoke.mjs",
     "test:interaction": "node scripts/interaction-smoke.mjs",
     "test:lifecycle": "node scripts/lifecycle-smoke.mjs",
     "test:avatar-lifecycle": "node scripts/avatar-lifecycle-smoke.mjs",

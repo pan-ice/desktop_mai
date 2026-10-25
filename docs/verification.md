@@ -1,5 +1,18 @@
 # 验证记录
 
+## 2026-10-25 MiMo 顺序朗读与漏读修复（桌宠 0.4.8）
+
+- 用户确认聊天记录为 1→2→3，使用 MiMo。真实 `speak`、播放模块与队列组合的可控回归显示：正常按 1／3／2 完成合成仍会按 1／2／3 播放；第 2 条后台预合成临时失败时却被直接跳过，实际只播 1、3。修复前回归结果保留在 `.cache/voice-order/result-before.json`。
+- 实际 Electron、preload/IPC、MiMo 克隆参考样本及本机 `/chat/completions` 服务复现相同结果：第 2 条预合成返回一次测试 429，实际只播 1、3。命令 `node scripts/tts-order-smoke.mjs --phase=before` 失败于完整顺序断言，报告 `.cache/tts-order-smoke/before.json`。此为可确认的客户端漏读机制，未调用用户 MiMo 服务，也不据此断言现场一定发生了限流。
+- 预合成失败或没有有效音频时，保留队首位置，在当前消息／分段轮到播放时重新合成一次，后文等待；再次失败显示错误，不无限重试。取消等待后，迟到的成功或失败均不能触发重试和旧播放。相同恢复规则也适用于长回复内部的下一段预合成。
+- 另在真实主进程复现保存第 2 条回复期间发生同会话重连，聊天记录保留 1／2／3，但临时连接代次变化使第 2 条失去即时标记，朗读仅为 1、3；旧版探针报告在 `.cache/tts-order-transport/reconnect-save-result.json`。此连接交错条件与单纯合成完成次序不同。
+- 即时交付现使用独立的会话／用户意图代次，保留原云历史同步代次。已持久化的合格回复在自动重连未就绪时暂存，连接就绪后按接收顺序发布；记录最多 1,000 条，并再次校验历史对象、身份及消息存在。主动断开、清空记录、切换身份或接入凭证会在等待保存前取消旧资格，不会补读。
+- 最终 286 项单元测试、类型检查和构建通过。5 项真实朗读函数／播放模块／队列组合回归覆盖正常完成乱序、预合成失败恢复、取消后的迟到成功或失败、有限重试失败提示及长回复后续分段。既有 `voice-replies-smoke --hidden` 与 `lifecycle-smoke` 通过，保留引用过滤、原音频、手动朗读、历史与即时顺序、时钟偏差、重载去重和长会话行为。
+- 实际 MiMo 克隆路径的本机 429、真实静音音频解码／自然结束，以及开发 HTTP 页面上的 503 三轮均通过，返回完成次序明确记录为 1／3／2 失败／2 重试成功，实际播放完整 1／2／3，第 2 条只恢复一次。报告 `.cache/tts-order-smoke/{after,native-after,dev-503}.json`。真实主进程交付的构建／开发模式各 8 个场景也全部通过：同会话两种保存／重连顺序均读 1／2／3，六种主动取消条件不读旧第 2 条，页面错误为 0；报告 `.cache/reply-delivery-smoke/{after,dev}.json`。
+- 实际 0.4.8 解包 EXE 的 MiMo 克隆 429 恢复与真实音频解码／自然结束通过，核对 ASAR、`app.isPackaged=true` 和双窗 `file:` 页面，返回乱序后最终完整播放 1／2／3；报告 `.cache/tts-order-smoke/packaged-native-429.json`。主进程同 8 个交付场景在实际 EXE 也全部通过，报告 `.cache/reply-delivery-smoke/packaged.json`，页面错误均为 0，测试配置与进程已清理。
+
+- 0.4.8 Portable 已离线生成，ASAR 与最终构建指纹、13 个构建／资源文件一致，依赖、版本图标、RunAsNode 与正式 CSP 检查通过。实际 Portable EXE 两次启动通过包内双窗／六页、污染环境变量、资源协议、自动端口认证握手、发送及重启持久化；页面均为 `file:` 且无开发端点授权，临时配置已清理。报告位于 `.cache/release-verification/result.json` 和 `.cache/portable-smoke/result.json`；`release/SHA256SUMS.txt` 仅列本轮桌宠 0.4.8、原独立适配器 0.1.1 与原网关 0.4.6 ZIP，配套 ZIP 哈希未变，旧包保留。
+
 ## 2026-10-25 跨消息朗读预缓冲（桌宠 0.4.7）
 
 - 真实 Electron 旧构建复现：原始语音持续播放时，连续到达的「文字甲／原始语音乙／文字丙」没有触发任何后续 TTS 请求，必须逐条等到播放才合成。命令 `node scripts/tts-buffer-smoke.mjs --phase=before` 失败于提前合成断言，报告 `.cache/tts-buffer-smoke/before.json`，页面错误为 0。

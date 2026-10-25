@@ -139,7 +139,19 @@ const accountClient = new AccountClient(certificateAuthority);
 const localServer = new LocalServer(process.env.MAI_PYTHON);
 let qqLogin: { server: string; proof: LoginProof } | null = null;
 let historyEpoch = 0;
+// Reconnecting restarts history sync, while accepted replies retain delivery
+// eligibility until the conversation or the user's connection intent changes.
+let replyDeliveryEpoch = 0;
 let repliesBeforeConnection = new Set<string>();
+const pendingReplyDeliveries = new Map<
+  string,
+  {
+    receivedAt: number;
+    history: ChatMessage[];
+    scope: string;
+    epoch: number;
+  }
+>();
 let store: StateStore;
 let recoveryShortcut: string | null = null;
 const live2dCores: Partial<Record<Live2DRuntime, Live2DCore>> = {};
@@ -164,6 +176,50 @@ let replyQueue: Promise<void> = Promise.resolve();
 let lastObservation = 0;
 let lastScreenHash = "";
 let observing = false;
+
+function replyDeliveryScope() {
+  const settings = store.state.settings;
+  return JSON.stringify([
+    settings.connectionMode,
+    settings.serverUrl,
+    settings.serverAccountId,
+    settings.adapterPort,
+    settings.adapterScope,
+    settings.platform,
+    settings.botId,
+    settings.userId,
+    settings.userName,
+  ]);
+}
+
+function invalidateReplyDeliveries() {
+  ++replyDeliveryEpoch;
+  pendingReplyDeliveries.clear();
+}
+
+function flushReplyDeliveries() {
+  if (bridge.phase !== "connected") return;
+  const scope = replyDeliveryScope();
+  for (const [id, delivery] of pendingReplyDeliveries) {
+    pendingReplyDeliveries.delete(id);
+    if (
+      delivery.epoch !== replyDeliveryEpoch ||
+      delivery.scope !== scope ||
+      delivery.history !== store.state.history ||
+      !delivery.history.some(
+        (message) => message.id === id && message.role === "assistant",
+      ) ||
+      store.state.liveReplies.some((message) => message.id === id)
+    )
+      continue;
+    store.state.liveReplies = [
+      ...store.state.liveReplies,
+      { id, receivedAt: delivery.receivedAt },
+    ].slice(-1000);
+    lastInteraction = Math.max(lastInteraction, delivery.receivedAt);
+    clearReplyStatus();
+  }
+}
 
 async function observeScreen(now: number) {
   const settings = store.state.settings;
@@ -683,6 +739,7 @@ async function updateSettings(patch: Partial<Settings>) {
       "userName",
     ] as const
   ).some((key) => key in parsed && parsed[key] !== previous[key]);
+  if (connectionChanged) invalidateReplyDeliveries();
   if (connectionChanged && bridge.phase !== "disconnected") {
     await bridge.disconnect();
     activity("连接配置已更新，请重新连接 MaiBot");
@@ -1121,8 +1178,10 @@ async function commands(
           .toString("base64");
       else delete store.encrypted[key];
       store.state.credentials[key] = Boolean(value);
-      if (key === "adapterToken" || key === "serverToken")
+      if (key === "adapterToken" || key === "serverToken") {
+        invalidateReplyDeliveries();
         await bridge.disconnect();
+      }
       await store.save();
       broadcast();
       return;
@@ -1185,6 +1244,7 @@ async function commands(
       if (result.status === "confirmed") {
         if (!safeStorage.isEncryptionAvailable())
           throw new Error("系统加密不可用，无法保存设备凭证");
+        invalidateReplyDeliveries();
         await bridge.disconnect();
         await replyQueue;
         await updateSettings({
@@ -1231,6 +1291,7 @@ async function commands(
       const owned = (await accountClient.accounts(server, token)).accounts;
       const selected = owned.find((account) => account.id === id);
       if (!selected) throw new Error("该桌宠账号不存在或未获得授权");
+      invalidateReplyDeliveries();
       await bridge.disconnect();
       await replyQueue;
       ++historyEpoch;
@@ -1248,6 +1309,7 @@ async function commands(
       if (connectionMode !== "server" || !serverUrl)
         throw new Error("请先选择桌宠服务器");
       if (store.state.settings.serverAccountId === id) {
+        invalidateReplyDeliveries();
         await bridge.disconnect();
         await replyQueue;
         // 只取消本机选择；聊天缓存归档保留，服务器账号、历史和设备授权保持有效。
@@ -1289,6 +1351,7 @@ async function commands(
       );
       await accountClient.revoke(server, token, id);
       if (current?.current) {
+        invalidateReplyDeliveries();
         await bridge.disconnect();
         await replyQueue;
         ++historyEpoch;
@@ -1367,6 +1430,7 @@ async function commands(
         throw new Error("服务器凭证文件格式不正确，请向管理员重新获取");
       if (!safeStorage.isEncryptionAvailable())
         throw new Error("系统加密不可用，无法保存接入凭证");
+      invalidateReplyDeliveries();
       await bridge.disconnect();
       await replyQueue;
       store.selectHistory("server:pending");
@@ -1406,6 +1470,7 @@ async function commands(
         result.filePaths[0],
       );
       accountClient.close();
+      invalidateReplyDeliveries();
       await bridge.disconnect();
       broadcast();
       activity(
@@ -1417,6 +1482,7 @@ async function commands(
       const serverUrl = serverUrlSchema.parse(args[0]);
       if (await serverCertificates!.remove(serverUrl)) {
         accountClient.close();
+        invalidateReplyDeliveries();
         await bridge.disconnect();
         broadcast();
         activity(`已移除 ${new URL(serverUrl).hostname} 的自定义 WSS 证书`);
@@ -1424,11 +1490,13 @@ async function commands(
       return;
     }
     case "disconnect":
+      invalidateReplyDeliveries();
       return bridge.disconnect();
     case "send":
       return send(sendSchema.parse(args[0]));
     case "clearHistory": {
       const currentHistory = store.state.history;
+      invalidateReplyDeliveries();
       if (
         store.state.settings.connectionMode === "server" &&
         store.state.settings.serverAccountId
@@ -1958,7 +2026,10 @@ void app
         const key = createHash("sha256")
           .update(`${store.state.settings.serverUrl}\n${status.userId}`)
           .digest("hex");
+        const previousHistory = store.state.history;
         store.selectHistory(`server:${key}`);
+        if (previousHistory !== store.state.history)
+          invalidateReplyDeliveries();
         persist();
       }
       // 初次同步会替换历史对象，保留连接前的 ID，避免缓存重发恢复朗读资格。
@@ -1968,6 +2039,7 @@ void app
           .map((message) => message.id),
       );
       store.state.connection = status;
+      flushReplyDeliveries();
       store.state.historySync = {
         enabled:
           store.state.settings.connectionMode === "server" &&
@@ -2008,6 +2080,7 @@ void app
     });
     bridge.on("history_clear", () => {
       const epoch = ++historyEpoch;
+      invalidateReplyDeliveries();
       const history = store.state.history;
       replyQueue = replyQueue
         .catch(() => {})
@@ -2031,7 +2104,8 @@ void app
     });
     bridge.on("reply", (reply: Reply, acknowledge: (error?: Error) => void) => {
       const history = store.state.history;
-      const epoch = historyEpoch;
+      const epoch = replyDeliveryEpoch;
+      const scope = replyDeliveryScope();
       const previousReplies = repliesBeforeConnection;
       const receivedAt = Date.now();
       replyQueue = replyQueue
@@ -2059,19 +2133,29 @@ void app
             if (history.length > 1000) history.splice(0, history.length - 1000);
             await store.save();
           }
-          if (history === store.state.history && epoch === historyEpoch) {
+          if (
+            history === store.state.history &&
+            epoch === replyDeliveryEpoch &&
+            scope === replyDeliveryScope()
+          ) {
             // 存储去重不等于实时投递已处理：history 可能比同一条 reply 先到。
             if (
               !previousReplies.has(reply.id) &&
+              !pendingReplyDeliveries.has(reply.id) &&
               !store.state.liveReplies.some((item) => item.id === reply.id)
             ) {
-              store.state.liveReplies = [
-                ...store.state.liveReplies,
-                { id: reply.id, receivedAt },
-              ].slice(-1000);
-              lastInteraction = receivedAt;
-              clearReplyStatus();
+              pendingReplyDeliveries.set(reply.id, {
+                receivedAt,
+                history,
+                scope,
+                epoch,
+              });
+              if (pendingReplyDeliveries.size > 1000)
+                pendingReplyDeliveries.delete(
+                  pendingReplyDeliveries.keys().next().value!,
+                );
             }
+            flushReplyDeliveries();
             broadcast();
           }
           acknowledge();
