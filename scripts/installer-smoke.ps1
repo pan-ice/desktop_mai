@@ -70,7 +70,18 @@ function Verify-Installed {
     $shell = New-Object -ComObject WScript.Shell
     foreach ($link in $shortcuts) {
         Assert-True (Test-Path -LiteralPath $link) "Missing shortcut: $link"
-        Assert-True ($shell.CreateShortcut($link).TargetPath -eq $installedExe) "Incorrect shortcut target: $link"
+        $shortcutTarget = $shell.CreateShortcut($link).TargetPath
+        # Windows shell links may expose an 8.3 alias. Compare canonical paths
+        # to the actual installed file, keeping a wrong/missing target fatal.
+        $shortcutCheck = @'
+import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
+const [actual, expected] = process.argv.slice(1);
+assert.ok(actual, "Shortcut returned an empty target");
+assert.equal(realpathSync.native(actual).toLowerCase(), realpathSync.native(expected).toLowerCase(), `Incorrect shortcut target: ${actual}`);
+'@
+        & node --input-type=module -e $shortcutCheck $shortcutTarget $installedExe
+        Assert-True ($LASTEXITCODE -eq 0) "Incorrect shortcut target: $link"
     }
 }
 
