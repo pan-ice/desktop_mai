@@ -474,6 +474,8 @@ describe("已认证连接的内核名字", () => {
     const names: string[] = [];
     instance.on("bot-name", (name) => names.push(name));
     const closed = once(socket, "close");
+    // 对端收到关闭帧时，本地 close 回调可能尚未运行；等待桥接器自己的状态通知。
+    const disconnected = once(instance, "status");
     socket.send(
       JSON.stringify(
         replyFrame("wrong-session", {
@@ -483,6 +485,7 @@ describe("已认证连接的内核名字", () => {
       ),
     );
     expect((await closed)[0]).toBe(1008);
+    expect((await disconnected)[0].phase).toBe("reconnecting");
     expect(instance.botName).toBeNull();
     expect(names).toEqual([]);
   });
