@@ -15,6 +15,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { _electron as electron } from "playwright";
 import WebSocket from "ws";
 import { createGlb } from "./model-fixture.mjs";
+import { projectRequire } from "./process-tools.mjs";
 
 // One interaction suite, three real application entries. Never replace the
 // packaged entry with a bootstrap or redefine app.isPackaged/getAppPath.
@@ -28,16 +29,18 @@ assert.ok(
   ["dev", "build", "packaged"].includes(mode),
   "Use --mode=dev|build|packaged",
 );
+const packageInfo = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+const defaultPackagedExecutable =
+  process.platform === "darwin"
+    ? `release/mac${process.arch === "arm64" ? "-arm64" : ""}/${packageInfo.build.productName}.app/Contents/MacOS/${packageInfo.build.productName}`
+    : `release/win-unpacked/${packageInfo.build.productName}.exe`;
 const executable =
   mode === "packaged"
     ? resolve(
-        option("exe") ||
-          process.env.MAI_TEST_EXE ||
-          "release/win-unpacked/Mai 桌面伙伴.exe",
+        option("exe") || process.env.MAI_TEST_EXE || defaultPackagedExecutable,
       )
-    : resolve("node_modules/electron/dist/electron.exe");
+    : projectRequire("electron");
 await access(executable);
-const packageInfo = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 const live2dCache = resolve(".cache/live2d-compat");
 const live2dFixtures = [
   {

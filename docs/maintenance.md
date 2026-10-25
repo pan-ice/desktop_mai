@@ -43,6 +43,14 @@ CI 配置位于各自 `.github/workflows`，推送后由 GitHub Actions 执行�
 
 ## 发布
 
+GitHub 下载包由 `.github/workflows/release.yml` 生成，包含 Windows x64 Portable EXE、Mac Intel / Apple Silicon 的 DMG 与 ZIP、独立消息适配器 ZIP 和 `SHA256SUMS.txt`。三个平台使用各自原生 runner 执行单元测试、构建、ASAR / 图标 / 版本 / 架构核对、实际应用交互与重启验收；Windows 额外验收独立适配器和便携启动器。全部通过才发布，失败时不会公开半成品。
+
+发布前同步 `package.json`、`package-lock.json` 和文档中的版本并推送 main。在 Actions →“桌宠发行包”→ Run workflow 中选择 main、勾选 `publish`，会在本次构建的提交上创建 `v版本号` 标签并发布 Release。不勾选时只提供保留 14 天的 Actions artifacts。也可以推送与 package.json 一致的 `v版本号` 标签触发发布。已经公开的 Release 不会覆盖，应提升版本号重新发布；未公开的草稿可重跑补齐。工作流只在发布任务使用仓库自带的 `GITHUB_TOKEN` 写入 Release，无需额外 PAT。
+
+Mac 本机执行 `npm run dist:mac`，自动使用当前 Node.js 架构（x64 / arm64）的 Electron，生成 DMG 和 ZIP；需在对应架构的 Mac 上运行 `npm ci`。图标由 electron-builder 从现有 SVG 转换。使用 ad-hoc 签名并校验签名完整性，尚无 Developer ID 签名或 Apple 公证；下载者可能需要在系统设置中允许首次打开。麦克风与摄像头权限文案写入 Info.plist。`npm run verify:release` 和 `npm run test:runtime -- --mode=packaged` 会自动选择本机应用包路径。
+
+以下是本地完整验收流程（包含可选的原网关插件联调，相关源码与环境需先准备好）：
+
 ```powershell
 npm ci
 npm run typecheck

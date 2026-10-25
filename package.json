@@ -55,7 +55,8 @@
     "format": "prettier --write electron shared src tests scripts *.ts package.json tsconfig.json index.html",
     "dist:adapter": "node scripts/package-message-adapter.mjs",
     "dist:plugin-adapter": "node scripts/package-adapter.mjs",
-    "dist:win": "npm run build && npm run dist:adapter && node scripts/package-win.mjs"
+    "dist:win": "npm run build && npm run dist:adapter && node scripts/package-win.mjs",
+    "dist:mac": "npm run build && node scripts/package-mac.mjs"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.4.2",
@@ -118,6 +119,25 @@
     },
     "portable": {
       "artifactName": "Mai-Desktop-Pet-${version}-win-x64.exe"
+    },
+    "mac": {
+      "icon": "resources/icon.svg",
+      "category": "public.app-category.entertainment",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Mai-Desktop-Pet-${version}-mac-${arch}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "notarize": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "允许 Mai 桌面伙伴录制语音，发送给你配置的语音识别服务。",
+        "NSCameraUsageDescription": "允许 Mai 桌面伙伴在你开启视觉功能时使用摄像头。"
+      }
+    },
+    "dmg": {
+      "sign": false
     }
   }
 }

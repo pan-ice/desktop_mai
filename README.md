@@ -1,6 +1,6 @@
 # Mai · 桌面伙伴
 
-以 **MaiBot 为对话内核**、参考 [N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) 桌面陪伴体验开发的 Windows 桌宠。Electron + React + TypeScript；不附带第三方角色模型，可导入自己的角色。
+以 **MaiBot 为对话内核**、参考 [N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) 桌面陪伴体验开发的 Windows / macOS 桌宠。Electron + React + TypeScript；不附带第三方角色模型，可导入自己的角色。
 
 桌宠可通过本仓库 `adapter/` 内的**独立 Python 适配器**接入 MaiBot 官方经典消息服务，按官方 `maim_message` 协议收发私聊。人格、回复策略、表达学习、长期记忆、插件与工具由 MaiBot 负责。原 MessageGateway 网关插件和 QQ 服务器接入继续保留；主动陪伴需要网关插件提供的任务接口。
 
@@ -18,6 +18,18 @@ MaiBot 由部署方独立安装，客户端仓库不包含 `MaiBot/`。仅在需
 0.4.1 支持 **100 MiB 原始音频**，即时回复、云端历史恢复和本地媒体保存使用相同上限；需同步更新网关插件与中继至 0.4.5。用户输入和图片限制保持原值。音乐插件下载超过其自身限制的文件时，还需将 `music.cache_max_file_size_mb` 设置为 `100` 或更大。
 
 ## 启动
+
+直接使用请前往 [GitHub Releases](https://github.com/pan-ice/desktop_mai/releases/latest) 下载，无需安装 Node.js：
+
+| 系统                        | 文件                                 | 使用方式                |
+| --------------------------- | ------------------------------------ | ----------------------- |
+| Windows x64                 | `Mai-Desktop-Pet-版本-win-x64.exe`   | 便携版，直接运行        |
+| Mac Apple Silicon（M 系列） | `Mai-Desktop-Pet-版本-mac-arm64.dmg` | 打开后拖入 Applications |
+| Mac Intel                   | `Mai-Desktop-Pet-版本-mac-x64.dmg`   | 打开后拖入 Applications |
+
+Mac 另提供 ZIP，解压后将 `.app` 移入 Applications。Mac 包使用 ad-hoc 签名，尚无 Apple Developer ID 签名或公证；首次打开若被系统拦截，可在“系统设置 → 隐私与安全性”中允许打开。Windows 包也未使用商业代码签名。每个 Release 附带 `SHA256SUMS.txt` 与独立适配器 ZIP。
+
+以下命令用于从源码开发、构建：
 
 Node.js **22.12+**（开发环境已使用 Node.js 24 验证）。
 
@@ -44,6 +56,8 @@ npm run dist:win
 ```
 
 生成 `release/Mai-Desktop-Pet-0.4.10-win-x64.exe` 和独立的 `MaiBot-Desktop-Message-Adapter-0.1.1.zip`。正式桌宠直接加载包内页面，不启动开发网页服务，也无需安装 Node.js；新适配器解压到独立目录，以 Python 进程运行。发行包不包含内核、凭证或角色模型。原网关插件可在获取其源码后使用 `npm run dist:plugin-adapter` 单独打包。
+
+macOS 在 Mac 上执行 `npm run dist:mac`，按当前 Node.js 架构生成 `release/Mai-Desktop-Pet-0.4.10-mac-arm64.dmg` / `mac-x64.dmg` 及同名 ZIP。GitHub Actions 的“桌宠发行包”同时构建 Windows x64、Mac Intel 和 Apple Silicon，全部验收通过后发布 Release；维护方式见[维护指南](docs/maintenance.md#发布)。
 
 ## 官方消息协议接入
 
@@ -158,7 +172,7 @@ N.E.K.O 的 Steam 创意工坊、猫娘网络、手机端、专有账号 / 云�
 
 ## 声音与设备
 
-系统朗读无需 API，声音取决于 Windows 已安装的语音包。
+系统朗读无需 API，声音取决于操作系统已安装的语音包。
 
 录音转写与 API 朗读使用「声音与感知」中配置的兼容服务：`POST /audio/transcriptions`、`POST /audio/speech`，会保留 Base URL 中的 `/v1` 等前缀。本地兼容服务可以不填 API Key。先保存配置，再使用录音测试；测试转写不会自动发消息。
 

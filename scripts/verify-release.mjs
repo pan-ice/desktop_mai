@@ -11,10 +11,17 @@ import { productionBuildCurrent } from "./build-state.mjs";
 const { getCurrentFuseWire, FuseV1Options } =
   packagingRequire("@electron/fuses");
 const { FuseState } = packagingRequire("@electron/fuses/dist/constants.js");
-const { NtExecutable, NtExecutableResource, Resource } =
-  packagingRequire("resedit");
-const directory = resolve(process.argv[2] || "release/win-unpacked");
-const archive = join(directory, "resources/app.asar");
+const expected = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+const defaultDirectory =
+  process.platform === "darwin"
+    ? `release/mac${process.arch === "arm64" ? "-arm64" : ""}/${expected.build.productName}.app`
+    : "release/win-unpacked";
+const directory = resolve(process.argv[2] || defaultDirectory);
+const isMac = directory.endsWith(".app");
+const archive = join(
+  directory,
+  isMac ? "Contents/Resources/app.asar" : "resources/app.asar",
+);
 const files = new Set(
   listPackage(archive).map((file) =>
     file.replaceAll("\\", "/").replace(/^\//, ""),
@@ -26,7 +33,6 @@ const extract = (file) => {
   return extractFile(archive, join(...file.split("/")));
 };
 const info = JSON.parse(extract("package.json"));
-const expected = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 assert.equal(info.version, expected.version);
 assert.equal(info.license, "MIT");
 assert.deepEqual(extract("LICENSE"), await readFile(resolve("LICENSE")));
@@ -192,33 +198,74 @@ for (const scheme of ["mai-asset", "mai-media"])
     `缺少 ${scheme} 协议注册`,
   );
 
-const executable = join(directory, `${expected.build.productName}.exe`);
+const executable = join(
+  directory,
+  isMac
+    ? `Contents/MacOS/${expected.build.productName}`
+    : `${expected.build.productName}.exe`,
+);
 const wire = await getCurrentFuseWire(executable);
 assert.equal(
   wire[FuseV1Options.RunAsNode],
   FuseState.DISABLE,
-  "正式 EXE 必须关闭 RunAsNode fuse",
+  "正式应用必须关闭 RunAsNode fuse",
 );
-const pe = NtExecutable.from(await readFile(executable));
-const resources = NtExecutableResource.from(pe);
-const versions = Resource.VersionInfo.fromEntries(resources.entries);
-const strings = versions.flatMap((version) =>
-  version
-    .getAllLanguagesForStringValues()
-    .map((language) => version.getStringValues(language)),
-);
-assert.ok(
-  strings.some(
-    (value) =>
-      value.ProductName === expected.build.productName &&
-      value.FileVersion === expected.version,
-  ),
-  "EXE 产品名称或版本资源不正确",
-);
-assert.ok(
-  Resource.IconGroupEntry.fromEntries(resources.entries).length > 0,
-  "EXE 图标资源缺失",
-);
+if (isMac) {
+  const { parse } = packagingRequire("plist");
+  const plist = parse(
+    await readFile(join(directory, "Contents/Info.plist"), "utf8"),
+  );
+  assert.equal(plist.CFBundleIdentifier, expected.build.appId);
+  assert.equal(plist.CFBundleShortVersionString, expected.version);
+  assert.equal(plist.CFBundleExecutable, expected.build.productName);
+  assert.equal(
+    plist.NSMicrophoneUsageDescription,
+    expected.build.mac.extendInfo.NSMicrophoneUsageDescription,
+  );
+  assert.equal(
+    plist.NSCameraUsageDescription,
+    expected.build.mac.extendInfo.NSCameraUsageDescription,
+  );
+  assert.ok(plist.CFBundleIconFile, "Mac 图标资源缺失");
+  const icon = await readFile(
+    join(directory, "Contents/Resources", plist.CFBundleIconFile),
+  );
+  assert.equal(icon.toString("ascii", 0, 4), "icns");
+  const binary = await readFile(executable);
+  assert.equal(
+    binary.readUInt32LE(0),
+    0xfeedfacf,
+    "必须是原生 64 位 Mach-O 程序",
+  );
+  assert.equal(
+    binary.readUInt32LE(4),
+    process.arch === "arm64" ? 0x0100000c : 0x01000007,
+    "Mac 包架构必须与构建主机一致",
+  );
+} else {
+  const { NtExecutable, NtExecutableResource, Resource } =
+    packagingRequire("resedit");
+  const pe = NtExecutable.from(await readFile(executable));
+  const resources = NtExecutableResource.from(pe);
+  const versions = Resource.VersionInfo.fromEntries(resources.entries);
+  const strings = versions.flatMap((version) =>
+    version
+      .getAllLanguagesForStringValues()
+      .map((language) => version.getStringValues(language)),
+  );
+  assert.ok(
+    strings.some(
+      (value) =>
+        value.ProductName === expected.build.productName &&
+        value.FileVersion === expected.version,
+    ),
+    "EXE 产品名称或版本资源不正确",
+  );
+  assert.ok(
+    Resource.IconGroupEntry.fromEntries(resources.entries).length > 0,
+    "EXE 图标资源缺失",
+  );
+}
 const report = {
   passed: true,
   version: expected.version,

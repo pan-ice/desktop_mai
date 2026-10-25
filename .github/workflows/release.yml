@@ -1,0 +1,129 @@
+name: 桌宠发行包
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 全部验收通过后发布 Release（仅 main 或版本标签）
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            platform: win
+            arch: x64
+          - name: macOS Intel
+            runner: macos-15-intel
+            platform: mac
+            arch: x64
+          - name: macOS Apple Silicon
+            runner: macos-15
+            platform: mac
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        if: matrix.platform == 'win'
+        with:
+          python-version: "3.11"
+      - name: 核对版本标签与构建架构
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          assert.equal(process.arch, process.env.EXPECTED_ARCH);
+          if (process.env.GITHUB_REF_TYPE === 'tag')
+            assert.equal(process.env.GITHUB_REF_NAME, `v${version}`, '版本标签必须与 package.json 一致');
+          JS
+      - run: npm ci
+      - run: npm test
+      - name: 独立适配器验收与打包
+        if: matrix.platform == 'win'
+        run: |
+          python -m pip install -r adapter/requirements.txt
+          npm run test:message-adapter
+          npm run dist:adapter
+      - run: npm run build
+      - name: Windows 便携版
+        if: matrix.platform == 'win'
+        run: node scripts/package-win.mjs
+      - name: macOS DMG 和 ZIP
+        if: matrix.platform == 'mac'
+        run: node scripts/package-mac.mjs
+      - run: npm run verify:release
+      - name: 核对 Mac 应用签名
+        if: matrix.platform == 'mac'
+        run: |
+          for app in release/mac*/*.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+      - name: 实际应用启动与重启验收
+        run: npm run test:runtime -- --mode=packaged
+      - name: Windows 便携入口验收
+        if: matrix.platform == 'win'
+        run: npm run test:portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: 发布 GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (inputs.publish && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: 核对完整产物、生成 SHA256 并发布
+        run: node scripts/publish-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
