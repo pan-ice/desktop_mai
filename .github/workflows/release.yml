@@ -30,14 +30,17 @@ jobs:
             runner: windows-latest
             platform: win
             arch: x64
+            runtimeArgs: ""
           - name: macOS Intel
             runner: macos-15-intel
             platform: mac
             arch: x64
+            runtimeArgs: "--software-rendering"
           - name: macOS Apple Silicon
             runner: macos-15
             platform: mac
             arch: arm64
+            runtimeArgs: ""
     defaults:
       run:
         shell: bash
@@ -89,7 +92,7 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$app"
           done
       - name: 实际应用启动与重启验收
-        run: npm run test:runtime -- --mode=packaged
+        run: npm run test:runtime -- --mode=packaged ${{ matrix.runtimeArgs }}
       - name: Windows 便携入口验收
         if: matrix.platform == 'win'
         run: npm run test:portable

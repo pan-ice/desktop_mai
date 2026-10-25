@@ -49,6 +49,8 @@ GitHub 下载包由 `.github/workflows/release.yml` 生成，包含 Windows x64 
 
 Mac 本机执行 `npm run dist:mac`，自动使用当前 Node.js 架构（x64 / arm64）的 Electron，生成 DMG 和 ZIP；需在对应架构的 Mac 上运行 `npm ci`。图标由 electron-builder 从现有 SVG 转换。使用 ad-hoc 签名并校验签名完整性，尚无 Developer ID 签名或 Apple 公证；下载者可能需要在系统设置中允许首次打开。麦克风与摄像头权限文案写入 Info.plist。`npm run verify:release` 和 `npm run test:runtime -- --mode=packaged` 会自动选择本机应用包路径。
 
+Mac CI 先为网络测试配置 `127.0.0.2` 回环别名。Intel 虚拟 runner 的 3D 验收显式使用 `--software-rendering`（SwiftShader）；此选项只属于测试启动器，发行应用使用系统默认图形驱动。测试仍须完成真实 WebGL2 画布、模型导入和双窗口渲染，失败时输出 GPU 状态及加载错误。
+
 以下是本地完整验收流程（包含可选的原网关插件联调，相关源码与环境需先准备好）：
 
 ```powershell

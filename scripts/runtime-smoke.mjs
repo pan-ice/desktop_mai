@@ -25,6 +25,7 @@ const option = (name) =>
     ?.slice(name.length + 3);
 const mode = option("mode") || "build";
 const withLive2D = process.argv.includes("--live2d");
+const softwareRendering = process.argv.includes("--software-rendering");
 assert.ok(
   ["dev", "build", "packaged"].includes(mode),
   "Use --mode=dev|build|packaged",
@@ -352,6 +353,14 @@ async function launch() {
     executablePath: executable,
     args: [
       ...(mode === "packaged" ? [] : ["."]),
+      // Explicit test-only mode for virtual runners without a usable GPU.
+      ...(softwareRendering
+        ? [
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+          ]
+        : []),
       "--disable-renderer-backgrounding",
       "--disable-background-networking",
       "--disable-component-update",
@@ -799,6 +808,21 @@ async function checkMedia() {
   );
 }
 async function checkModels() {
+  report.graphics = {
+    softwareRendering,
+    features: await desktop.evaluate(({ app }) => app.getGPUFeatureStatus()),
+    webgl2: await dashboard.evaluate(() => {
+      const gl = document.createElement("canvas").getContext("webgl2");
+      if (!gl) return null;
+      const version = gl.getParameter(gl.VERSION);
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+      return version;
+    }),
+  };
+  assert.ok(
+    report.graphics.webgl2,
+    "3D 验收环境必须支持 WebGL2；虚拟 runner 可显式使用 --software-rendering",
+  );
   await navigate("角色衣橱", "models");
   for (const filename of ["runtime-image.png", "runtime-model.glb"]) {
     await desktop.evaluate(
@@ -1105,6 +1129,20 @@ try {
     `PASS ${mode} 真实入口：双窗口、UI、端口、聊天、虚拟媒体、模型和重启恢复`,
   );
 } catch (error) {
+  console.error(
+    "运行时验收失败：",
+    JSON.stringify(
+      {
+        message: String(error.message || error),
+        graphics: report.graphics,
+        errors,
+        assetErrors,
+        launchLog,
+      },
+      null,
+      2,
+    ),
+  );
   if (desktop && dashboard) await capture("failure.png").catch(() => {});
   await writeFile(
     join(base, "failure.json"),
