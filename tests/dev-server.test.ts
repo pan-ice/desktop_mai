@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { Server as HttpServer } from "node:http";
@@ -11,12 +11,18 @@ import electronConfig from "../electron.vite.config";
 import webConfig from "../vite.config";
 import { automaticDevPort } from "../dev-server";
 
+async function temporaryRoot(prefix: string) {
+  // Windows CI uses TEMP paths such as RUNNER~1. Vite rejects paths containing
+  // '~' in strict filesystem mode, so resolve the 8.3 alias before serving files.
+  return realpath(await mkdtemp(join(tmpdir(), prefix)));
+}
+
 describe.each([
   ["Electron", electronConfig.renderer!],
   ["浏览器预览", webConfig],
 ] as const)("%s 开发服务", (_name, config) => {
   it("监听源码，并排除可能被 Windows 锁定的运行时缓存", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mai-dev-watch-"));
+    const root = await temporaryRoot("mai-dev-watch-");
     const source = join(root, "src");
     const network = join(root, ".cache", "userdata", "Network");
     let server: Awaited<ReturnType<typeof createServer>> | undefined;
@@ -98,7 +104,7 @@ async function httpAndHmr(server: ViteDevServer, port: number) {
 }
 
 async function automaticFixture() {
-  const root = await mkdtemp(join(tmpdir(), "mai-dev-port-"));
+  const root = await temporaryRoot("mai-dev-port-");
   await writeFile(
     join(root, "index.html"),
     "<!doctype html><title>mai-port-fixture</title>",
